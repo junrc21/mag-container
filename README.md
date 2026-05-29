@@ -59,30 +59,3 @@ Mesmo quando o TTS funciona no Hermes, scripts manuais que fazem `import edge_tt
 Para evitar isso, o `entrypoint.sh` tenta garantir que `edge-tts` esteja importável no Python do Hermes via `uv` (padrão ligado).
 
 Para desabilitar: defina `EDGE_TTS_AUTO_INSTALL=0` nas env vars.
-
-## Migrar Neo4j -> ByteRover (export JSONL + import markdown)
-
-Pré-requisitos:
-- Acesso ao Neo4j via HTTP transactional endpoint (tx/commit)
-- Variáveis de ambiente configuradas (NUNCA commite senha no Git)
-
-Env vars:
-- `NEO4J_URL` (ex: `https://<host>/db/neo4j/tx/commit`)
-- `NEO4J_USER`
-- `NEO4J_PASSWORD`
-
-Rodar dentro do container (como usuário `hermes`):
-
-```sh
-export NEO4J_URL="https://<host>/db/neo4j/tx/commit"
-export NEO4J_USER="neo4j"
-export NEO4J_PASSWORD="***"
-
-sh /opt/hermes/scripts/neo4j_export_and_import_byterover.sh
-```
-
-Isso cria:
-- Export JSONL: `/opt/data/exports/neo4j/{nodes.jsonl,rels.jsonl}`
-- Import markdown: `/opt/data/byterover/.brv/context-tree/imports/neo4j/{nodes,rels}/*.md`
-
-Depois (opcional), rode `brv curate` para consolidar e gerar abstracts/overviews.
