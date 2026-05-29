@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ghcr.io/nousresearch/hermes-agent:latest
+ARG BASE_IMAGE=nousresearch/hermes-agent:main
 FROM ${BASE_IMAGE}
 
 # We keep runtime as user "hermes" (no root at runtime).

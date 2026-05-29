@@ -14,7 +14,7 @@ env:
   REGISTRY: ghcr.io
   # Set this to the exact Hermes image/tag you run today if you want a pinned base.
   # You can also override per-run in "workflow_dispatch" by editing the file or using a separate workflow.
-  BASE_IMAGE: ghcr.io/nousresearch/hermes-agent:latest
+  BASE_IMAGE: nousresearch/hermes-agent:main
 
 jobs:
   build-and-push:
@@ -54,4 +54,3 @@ jobs:
             BASE_IMAGE=${{ env.BASE_IMAGE }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
