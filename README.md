@@ -24,6 +24,22 @@ Arquivo: `.github/workflows/publish-ghcr.yml`
 
 Observação: ajuste `BASE_IMAGE` no workflow para a mesma imagem/tag do Hermes que você usa no EasyPanel.
 
+## Clonar `/opt/data` (memória/estado) para uma nova MAG
+
+Não coloque `/opt/data` dentro da imagem (GHCR) — isso contém estado, memória e possíveis credenciais.
+O caminho correto é clonar o storage persistente e montar no novo serviço.
+
+Script (HOST):
+- `scripts/clone_opt_data_on_host.sh`
+
+Uso (no servidor, como root):
+
+```sh
+sudo ./scripts/clone_opt_data_on_host.sh --service cyriusx_hermes-mag
+```
+
+O script imprime o path/volume clonado que você deve montar como `/opt/data` no novo serviço.
+
 ## Importante
 
 - Não embutir tokens/API keys na imagem: configure via env vars no EasyPanel.
