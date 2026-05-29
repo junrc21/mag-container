@@ -8,6 +8,7 @@ set -eu
 # - optionally connects ByteRover provider (if requested via env)
 
 export HOME="${HOME:-/opt/data}"
+export PATH="$HOME/.local/bin:${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
 
 mkdir -p "$HOME/.local/bin" "$HOME/logs" "$HOME/sessions" "$HOME/byterover"
 
@@ -25,9 +26,9 @@ if [ ! -f "$HOME/soul.md" ] && [ -f /opt/hermes/bootstrap/soul.md ]; then
   cp /opt/hermes/bootstrap/soul.md "$HOME/soul.md"
 fi
 
-# Optional: install ByteRover CLI if missing.
-# Set BRV_AUTO_INSTALL=1 to enable.
-if [ "${BRV_AUTO_INSTALL:-0}" = "1" ] && ! command -v brv >/dev/null 2>&1; then
+# Auto-install ByteRover CLI into the persistent volume if missing.
+# Default: enabled (set BRV_AUTO_INSTALL=0 to disable).
+if [ "${BRV_AUTO_INSTALL:-1}" = "1" ] && ! command -v brv >/dev/null 2>&1; then
   curl -fsSL https://byterover.dev/install.sh | sh
   if [ -x "$HOME/.brv-cli/bin/brv" ]; then
     ln -sf "$HOME/.brv-cli/bin/brv" "$HOME/.local/bin/brv" || true

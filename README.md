@@ -45,3 +45,10 @@ O script imprime o path/volume clonado que você deve montar como `/opt/data` no
 - Não embutir tokens/API keys na imagem: configure via env vars no EasyPanel.
 - Monte um volume em `/opt/data` para persistência.
 - Para clonar “estado”, copie o volume antigo para um volume novo (não compartilhe o mesmo `/opt/data` entre dois serviços).
+
+## ByteRover (brv)
+
+O `entrypoint.sh` faz auto-install do ByteRover CLI (`brv`) no primeiro boot se ele não existir no volume.
+Isso instala em `/opt/data/.brv-cli/bin/brv` e cria um symlink em `/opt/data/.local/bin/brv` (persistente).
+
+Para desabilitar: defina `BRV_AUTO_INSTALL=0` nas env vars.
