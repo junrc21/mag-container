@@ -35,6 +35,21 @@ if [ "${BRV_AUTO_INSTALL:-1}" = "1" ] && ! command -v brv >/dev/null 2>&1; then
   fi
 fi
 
+# Ensure Edge TTS Python package is importable from Hermes' Python.
+# Some base images ship without `pip`/`ensurepip` in the venv; Hermes can still
+# lazy-install for runtime use, but ad-hoc scripts that `import edge_tts` will fail.
+# Default: enabled (set EDGE_TTS_AUTO_INSTALL=0 to disable).
+if [ "${EDGE_TTS_AUTO_INSTALL:-1}" = "1" ]; then
+  HERMES_PY="/opt/hermes/.venv/bin/python3"
+  if [ -x "${HERMES_PY}" ] && ! "${HERMES_PY}" -c "import edge_tts" >/dev/null 2>&1; then
+    if command -v uv >/dev/null 2>&1; then
+      VENV_SITE="$("${HERMES_PY}" -c "import site; print(site.getsitepackages()[0])")"
+      mkdir -p "${VENV_SITE}"
+      uv pip install --python "${HERMES_PY}" edge-tts --target "${VENV_SITE}" >/dev/null 2>&1 || true
+    fi
+  fi
+fi
+
 # Optional: connect provider on boot (safe to be idempotent).
 # Set BRV_CONNECT_ON_BOOT=1 to enable.
 if [ "${BRV_CONNECT_ON_BOOT:-0}" = "1" ] && command -v brv >/dev/null 2>&1; then

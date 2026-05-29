@@ -52,3 +52,10 @@ O `entrypoint.sh` faz auto-install do ByteRover CLI (`brv`) no primeiro boot se 
 Isso instala em `/opt/data/.brv-cli/bin/brv` e cria um symlink em `/opt/data/.local/bin/brv` (persistente).
 
 Para desabilitar: defina `BRV_AUTO_INSTALL=0` nas env vars.
+
+## Edge TTS (edge-tts)
+
+Mesmo quando o TTS funciona no Hermes, scripts manuais que fazem `import edge_tts` podem falhar se o Python do Hermes não tiver `pip/ensurepip`.
+Para evitar isso, o `entrypoint.sh` tenta garantir que `edge-tts` esteja importável no Python do Hermes via `uv` (padrão ligado).
+
+Para desabilitar: defina `EDGE_TTS_AUTO_INSTALL=0` nas env vars.
