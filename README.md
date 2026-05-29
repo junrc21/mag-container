@@ -1,6 +1,7 @@
-# hermes-MAG clone kit
+# mag-container (Hermes MAG)
 
-Objetivo: gerar uma imagem “clonável” do seu serviço Hermes (MAG) sem depender de cliques manuais.
+Este repositório NÃO “armazena uma imagem Docker” (isso fica em um registry, ex. GHCR).
+Ele armazena o **recipe** (Dockerfile + entrypoint + bootstrap) para você **reconstruir** uma imagem idêntica e criar novas MAGs rapidamente.
 
 ## Como usar
 
@@ -17,4 +18,3 @@ docker build --build-arg BASE_IMAGE=<sua-imagem-atual> -t hermes-mag:clone .
 - Não embutir tokens/API keys na imagem: configure via env vars no EasyPanel.
 - Monte um volume em `/opt/data` para persistência.
 - Para clonar “estado”, copie o volume antigo para um volume novo (não compartilhe o mesmo `/opt/data` entre dois serviços).
-
