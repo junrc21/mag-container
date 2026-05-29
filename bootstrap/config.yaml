@@ -1,0 +1,45 @@
+model:
+  provider: gemini
+  default: gemini-2.5-flash
+  base_url: https://generativelanguage.googleapis.com/v1beta
+
+tts:
+  provider: edge
+  edge:
+    voice: pt-BR-FranciscaNeural
+
+# Keep auxiliary on gemini unless you explicitly want others.
+auxiliary:
+  vision:
+    provider: gemini
+    model: gemini-2.5-flash
+  web_extract:
+    provider: gemini
+    model: gemini-2.5-flash
+  title_generation:
+    provider: gemini
+    model: gemini-2.5-flash
+  approval:
+    provider: gemini
+    model: gemini-2.5-flash
+  compression:
+    provider: gemini
+    model: gemini-2.5-flash
+  skills_hub:
+    provider: gemini
+    model: gemini-2.5-flash
+  mcp:
+    provider: gemini
+    model: gemini-2.5-flash
+  triage_specifier:
+    provider: gemini
+    model: gemini-2.5-flash
+
+memory:
+  provider: byterover
+
+stt:
+  enabled: true
+  provider: local
+  local:
+    model: base
