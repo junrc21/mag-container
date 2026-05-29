@@ -6,7 +6,7 @@ model:
 tts:
   provider: edge
   edge:
-    voice: pt-BR-FranciscaNeural
+    voice: pt-BR-ThalitaMultilingualNeural
 
 # Keep auxiliary on gemini unless you explicitly want others.
 auxiliary:
