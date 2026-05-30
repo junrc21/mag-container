@@ -53,6 +53,19 @@ Isso instala em `/opt/data/.brv-cli/bin/brv` e cria um symlink em `/opt/data/.lo
 
 Para desabilitar: defina `BRV_AUTO_INSTALL=0` nas env vars.
 
+### Timeouts do ByteRover (Hermes plugin)
+
+Alguns comandos do ByteRover (especialmente `brv status` e `brv query`) podem levar mais tempo quando a árvore está grande ou com fila de processamento ativa. Esta imagem deixa os timeouts configuráveis via env vars:
+
+- `HERMES_BYTEROVER_QUERY_TIMEOUT_SECONDS` (default `10`)
+- `HERMES_BYTEROVER_CURATE_TIMEOUT_SECONDS` (default `120`)
+- `HERMES_BYTEROVER_STATUS_TIMEOUT_SECONDS` (default `60`)
+
+Exemplo recomendado para ambientes com import grande:
+
+- `HERMES_BYTEROVER_QUERY_TIMEOUT_SECONDS=120`
+- `HERMES_BYTEROVER_STATUS_TIMEOUT_SECONDS=120`
+
 ## Edge TTS (edge-tts)
 
 Mesmo quando o TTS funciona no Hermes, scripts manuais que fazem `import edge_tts` podem falhar se o Python do Hermes não tiver `pip/ensurepip`.
