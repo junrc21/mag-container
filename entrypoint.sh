@@ -50,13 +50,27 @@ if [ "${EDGE_TTS_AUTO_INSTALL:-1}" = "1" ]; then
   fi
 fi
 
-# Optional: connect provider on boot (safe to be idempotent).
-# Set BRV_CONNECT_ON_BOOT=1 to enable.
-if [ "${BRV_CONNECT_ON_BOOT:-0}" = "1" ] && command -v brv >/dev/null 2>&1; then
-  # Prefer GOOGLE_API_KEY; fall back to GEMINI_API_KEY if provided.
-  API_KEY="${GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}"
-  if [ -n "${API_KEY}" ]; then
-    brv providers connect google --api-key "${API_KEY}" >/dev/null 2>&1 || true
+# Optional: connect provider on boot (idempotent).
+# Behavior:
+# - If BRV_CONNECT_ON_BOOT=1: always attempt connect (if API key present).
+# - If BRV_CONNECT_ON_BOOT=0: never attempt connect.
+# - If unset: auto-attempt connect only when config.yaml indicates memory provider "byterover".
+if command -v brv >/dev/null 2>&1; then
+  SHOULD_CONNECT="0"
+  if [ "${BRV_CONNECT_ON_BOOT:-}" = "1" ]; then
+    SHOULD_CONNECT="1"
+  elif [ "${BRV_CONNECT_ON_BOOT:-}" = "" ]; then
+    if [ -f "$HOME/config.yaml" ] && grep -q "provider: byterover" "$HOME/config.yaml"; then
+      SHOULD_CONNECT="1"
+    fi
+  fi
+
+  if [ "${SHOULD_CONNECT}" = "1" ]; then
+    # Prefer GOOGLE_API_KEY; fall back to GEMINI_API_KEY if provided.
+    API_KEY="${GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}"
+    if [ -n "${API_KEY}" ]; then
+      brv providers connect google --api-key "${API_KEY}" >/dev/null 2>&1 || true
+    fi
   fi
 fi
 

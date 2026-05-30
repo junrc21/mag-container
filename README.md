@@ -53,6 +53,13 @@ Isso instala em `/opt/data/.brv-cli/bin/brv` e cria um symlink em `/opt/data/.lo
 
 Para desabilitar: defina `BRV_AUTO_INSTALL=0` nas env vars.
 
+### Conectar provider automaticamente
+
+Se `config.yaml` estiver com `memory.provider: byterover` e existir `GOOGLE_API_KEY` (ou `GEMINI_API_KEY`) nas env vars, a imagem tenta conectar o provider `google` automaticamente no boot.
+
+- Para forçar: `BRV_CONNECT_ON_BOOT=1`
+- Para desabilitar totalmente: `BRV_CONNECT_ON_BOOT=0`
+
 ### Timeouts do ByteRover (Hermes plugin)
 
 Alguns comandos do ByteRover (especialmente `brv status` e `brv query`) podem levar mais tempo quando a árvore está grande ou com fila de processamento ativa. Esta imagem deixa os timeouts configuráveis via env vars:
