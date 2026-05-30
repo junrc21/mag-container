@@ -8,32 +8,24 @@ tts:
   edge:
     voice: pt-BR-ThalitaMultilingualNeural
 
-# Keep auxiliary on gemini unless you explicitly want others.
+# Auxiliary tasks: keep on `auto` so Hermes uses the main model/provider.
 auxiliary:
   vision:
-    provider: gemini
-    model: gemini-2.5-flash
+    provider: auto
   web_extract:
-    provider: gemini
-    model: gemini-2.5-flash
+    provider: auto
   title_generation:
-    provider: gemini
-    model: gemini-2.5-flash
+    provider: auto
   approval:
-    provider: gemini
-    model: gemini-2.5-flash
+    provider: auto
   compression:
-    provider: gemini
-    model: gemini-2.5-flash
+    provider: auto
   skills_hub:
-    provider: gemini
-    model: gemini-2.5-flash
+    provider: auto
   mcp:
-    provider: gemini
-    model: gemini-2.5-flash
+    provider: auto
   triage_specifier:
-    provider: gemini
-    model: gemini-2.5-flash
+    provider: auto
 
 memory:
   provider: byterover
