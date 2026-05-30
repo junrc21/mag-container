@@ -8,24 +8,25 @@ tts:
   edge:
     voice: pt-BR-ThalitaMultilingualNeural
 
-# Auxiliary tasks: keep on `auto` so Hermes uses the main model/provider.
+# Auxiliary tasks: force `main` so Hermes always uses the main model/provider
+# (avoids auto-detection chains that may try OpenRouter/Nous first).
 auxiliary:
   vision:
-    provider: auto
+    provider: main
   web_extract:
-    provider: auto
+    provider: main
   title_generation:
-    provider: auto
+    provider: main
   approval:
-    provider: auto
+    provider: main
   compression:
-    provider: auto
+    provider: main
   skills_hub:
-    provider: auto
+    provider: main
   mcp:
-    provider: auto
+    provider: main
   triage_specifier:
-    provider: auto
+    provider: main
 
 memory:
   provider: byterover
