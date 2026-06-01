@@ -3,18 +3,36 @@ set -eu
 
 # Hermes runs as user "hermes" and persists under $HOME (/opt/data).
 # This script:
-# - ensures ByteRover CLI is available on PATH via a stable symlink
+# - ensures ByteRover CLI resolves to the canonical client bin (XDG_DATA_HOME)
 # - seeds config/soul into /opt/data if missing (without overwriting)
 # - optionally connects ByteRover provider (if requested via env)
 
-export HOME="${HOME:-/opt/data}"
-export PATH="$HOME/.local/bin:${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+# Canonical persistent home and XDG dirs (avoid drift across base images).
+export HOME="/opt/data"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-/opt/data/.local/share}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/opt/data/.config}"
 
-mkdir -p "$HOME/.local/bin" "$HOME/logs" "$HOME/sessions" "$HOME/byterover"
+BRV_PROJECT_DIR="/opt/data/byterover"
+BRV_CLIENT_BIN="${XDG_DATA_HOME}/brv/client/bin/brv"
+BRV_EXPECTED_BIN="${BRV_EXPECTED_BIN:-${BRV_CLIENT_BIN}}"
 
-# Expose brv in PATH for non-interactive gateway shells.
-if [ -x "$HOME/.brv-cli/bin/brv" ]; then
-  ln -sf "$HOME/.brv-cli/bin/brv" "$HOME/.local/bin/brv" || true
+# Explicit PATH order:
+# - Prefer ByteRover client bin (avoid .brv-cli shadowing).
+# - Keep Hermes CLI + venv early.
+export PATH="${XDG_DATA_HOME}/brv/client/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+mkdir -p \
+  "/opt/data/.local/bin" \
+  "${XDG_DATA_HOME}" \
+  "${XDG_CONFIG_HOME}" \
+  "/opt/data/logs" \
+  "/opt/data/sessions" \
+  "${BRV_PROJECT_DIR}"
+
+# Expose brv in /opt/data/.local/bin as a convenience, but ONLY if it points to
+# the canonical client bin (never to ~/.brv-cli).
+if [ -x "${BRV_CLIENT_BIN}" ]; then
+  ln -sf "${BRV_CLIENT_BIN}" "/opt/data/.local/bin/brv" || true
 fi
 
 # Seed files only if missing (keep user's persistent versions intact).
@@ -28,10 +46,28 @@ fi
 
 # Auto-install ByteRover CLI into the persistent volume if missing.
 # Default: enabled (set BRV_AUTO_INSTALL=0 to disable).
-if [ "${BRV_AUTO_INSTALL:-1}" = "1" ] && ! command -v brv >/dev/null 2>&1; then
-  curl -fsSL https://byterover.dev/install.sh | sh
-  if [ -x "$HOME/.brv-cli/bin/brv" ]; then
-    ln -sf "$HOME/.brv-cli/bin/brv" "$HOME/.local/bin/brv" || true
+if [ "${BRV_AUTO_INSTALL:-1}" = "1" ] && [ ! -x "${BRV_CLIENT_BIN}" ]; then
+  echo "[entrypoint] ByteRover client missing at ${BRV_CLIENT_BIN}; attempting install..." >&2
+
+  # Best-effort install: rely on HOME/XDG_* to steer install into the volume.
+  # Do not fail startup if the installer is slow or unavailable.
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL https://byterover.dev/install.sh | sh >/dev/null 2>&1 || true
+  fi
+
+  # Normalize: only link /opt/data/.local/bin/brv if the canonical client exists.
+  if [ -x "${BRV_CLIENT_BIN}" ]; then
+    ln -sf "${BRV_CLIENT_BIN}" "/opt/data/.local/bin/brv" >/dev/null 2>&1 || true
+  else
+    echo "[entrypoint] WARNING: ByteRover client still not found at ${BRV_CLIENT_BIN}. Startup will continue without brv." >&2
+  fi
+fi
+
+# Validate which brv will be used (help detect PATH shadowing).
+if command -v brv >/dev/null 2>&1; then
+  BRV_RESOLVED="$(command -v brv || true)"
+  if [ "${BRV_RESOLVED}" != "${BRV_EXPECTED_BIN}" ]; then
+    echo "[entrypoint] WARNING: brv resolves to '${BRV_RESOLVED}', expected '${BRV_EXPECTED_BIN}'" >&2
   fi
 fi
 
@@ -50,28 +86,30 @@ if [ "${EDGE_TTS_AUTO_INSTALL:-1}" = "1" ]; then
   fi
 fi
 
-# Optional: connect provider on boot (idempotent).
-# Behavior:
-# - If BRV_CONNECT_ON_BOOT=1: always attempt connect (if API key present).
-# - If BRV_CONNECT_ON_BOOT=0: never attempt connect.
-# - If unset: auto-attempt connect only when config.yaml indicates memory provider "byterover".
-if command -v brv >/dev/null 2>&1; then
-  SHOULD_CONNECT="0"
-  if [ "${BRV_CONNECT_ON_BOOT:-}" = "1" ]; then
-    SHOULD_CONNECT="1"
-  elif [ "${BRV_CONNECT_ON_BOOT:-}" = "" ]; then
-    if [ -f "$HOME/config.yaml" ] && grep -q "provider: byterover" "$HOME/config.yaml"; then
-      SHOULD_CONNECT="1"
-    fi
-  fi
+# Optional: connect provider on boot (NON-BLOCKING; explicit opt-in only).
+# - Default: OFF (do not auto-connect)
+# - Enable: BRV_CONNECT_ON_BOOT=1
+#
+# Connecting providers can be slow or fail on networking; never block Hermes startup.
+if [ "${BRV_CONNECT_ON_BOOT:-0}" = "1" ] && command -v brv >/dev/null 2>&1; then
+  (
+    cd "${BRV_PROJECT_DIR}" 2>/dev/null || exit 0
 
-  if [ "${SHOULD_CONNECT}" = "1" ]; then
     # Prefer GOOGLE_API_KEY; fall back to GEMINI_API_KEY if provided.
     API_KEY="${GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}"
-    if [ -n "${API_KEY}" ]; then
+    if [ -z "${API_KEY}" ]; then
+      exit 0
+    fi
+
+    # If already connected, do nothing. Providers list may be slow; cap time.
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 10s brv providers list 2>/dev/null | grep -qiE 'google|gemini' && exit 0
+      timeout 15s brv providers connect google --api-key "${API_KEY}" >/dev/null 2>&1 || true
+    else
+      brv providers list 2>/dev/null | grep -qiE 'google|gemini' && exit 0
       brv providers connect google --api-key "${API_KEY}" >/dev/null 2>&1 || true
     fi
-  fi
+  ) >/dev/null 2>&1 &
 fi
 
 exec hermes gateway run

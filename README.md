@@ -48,17 +48,25 @@ O script imprime o path/volume clonado que você deve montar como `/opt/data` no
 
 ## ByteRover (brv)
 
-O `entrypoint.sh` faz auto-install do ByteRover CLI (`brv`) no primeiro boot se ele não existir no volume.
-Isso instala em `/opt/data/.brv-cli/bin/brv` e cria um symlink em `/opt/data/.local/bin/brv` (persistente).
+O `entrypoint.sh` tenta garantir que o ByteRover CLI (`brv`) exista no volume persistente e que o bin resolvido seja o **client canônico**:
+
+- Bin canônico: `/opt/data/.local/share/brv/client/bin/brv`
+- `PATH` prioriza: `/opt/data/.local/share/brv/client/bin` (evita shadowing por instalações antigas)
+- Symlink (opcional): `/opt/data/.local/bin/brv -> /opt/data/.local/share/brv/client/bin/brv`
 
 Para desabilitar: defina `BRV_AUTO_INSTALL=0` nas env vars.
 
 ### Conectar provider automaticamente
 
-Se `config.yaml` estiver com `memory.provider: byterover` e existir `GOOGLE_API_KEY` (ou `GEMINI_API_KEY`) nas env vars, a imagem tenta conectar o provider `google` automaticamente no boot.
+Por padrão a imagem **não conecta provider no boot** (para não travar startup).
 
-- Para forçar: `BRV_CONNECT_ON_BOOT=1`
-- Para desabilitar totalmente: `BRV_CONNECT_ON_BOOT=0`
+- Para habilitar explicitamente: `BRV_CONNECT_ON_BOOT=1`
+- Recomendado: manter `GOOGLE_API_KEY` (ou `GEMINI_API_KEY`) nas env vars.
+
+Quando habilitado, o connect roda:
+- em background (não bloqueia `hermes gateway run`)
+- com timeout curto
+- em `cwd=/opt/data/byterover` para evitar “project-root pitfall”
 
 ### Timeouts do ByteRover (Hermes plugin)
 
@@ -72,6 +80,21 @@ Exemplo recomendado para ambientes com import grande:
 
 - `HERMES_BYTEROVER_QUERY_TIMEOUT_SECONDS=120`
 - `HERMES_BYTEROVER_STATUS_TIMEOUT_SECONDS=120`
+
+### Troubleshooting: brv path errado / daemon duplicado
+
+Dentro do container:
+
+```sh
+command -v brv
+brv --version
+cd /opt/data/byterover && brv status --format json
+ps -eo pid,ppid,etime,pcpu,pmem,cmd | grep -E "brv-server\\.js|agent-process\\.js" | grep -v grep
+cat /opt/data/.local/share/brv/daemon.json 2>/dev/null || true
+```
+
+Script de verificação (repo):
+- `scripts/verify_byterover_env.sh`
 
 ## Edge TTS (edge-tts)
 
