@@ -33,6 +33,30 @@ mkdir -p \
   "/opt/data/sessions" \
   "${BRV_PROJECT_DIR}"
 
+# ── MAG per-tenant bootstrap ────────────────────────────────────────────────
+# The MAG control plane mounts each tenant's generated files (config.yaml, .env,
+# SOUL.md and hooks/) read-only at /mag/bootstrap. Copy them into the persistent
+# /opt/data volume (HOME) so Hermes and the gateway event hooks pick them up.
+# Directories are merged into existing destinations so the pre-created
+# /opt/data/hooks gets populated; plain files are only seeded when absent, so a
+# tenant's persisted state (e.g. a config.yaml rewritten by a runtime reload) is
+# never clobbered on restart. Safe no-op when /mag/bootstrap is not mounted.
+MAG_BOOTSTRAP_DIR="/mag/bootstrap"
+mkdir -p /opt/data/workspace /opt/data/hooks
+if [ -d "$MAG_BOOTSTRAP_DIR" ]; then
+  for item in "$MAG_BOOTSTRAP_DIR"/* "$MAG_BOOTSTRAP_DIR"/.[!.]*; do
+    [ -e "$item" ] || continue
+    name="$(basename "$item")"
+    if [ -d "$item" ]; then
+      mkdir -p "/opt/data/$name"
+      cp -R "$item"/. "/opt/data/$name"/
+    elif [ ! -e "/opt/data/$name" ]; then
+      cp -R "$item" "/opt/data/$name"
+    fi
+  done
+fi
+# ────────────────────────────────────────────────────────────────────────────
+
 # Remove legacy/shadow installs that caused duplicate ByteRover clients/daemons.
 # Keep this on by default because /opt/data is persistent across restarts.
 if [ "${BRV_CLEAN_LEGACY_INSTALLS:-1}" = "1" ]; then
