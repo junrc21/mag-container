@@ -11,29 +11,97 @@ set -eu
 export HOME="/opt/data"
 export XDG_DATA_HOME="${XDG_DATA_HOME:-/opt/data/.local/share}"
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/opt/data/.config}"
+export BRV_INSTALL_DIR="${BRV_INSTALL_DIR:-${XDG_DATA_HOME}/brv-cli}"
+BRV_GLOBAL_DATA_DIR="${BRV_GLOBAL_DATA_DIR:-${XDG_DATA_HOME}/brv}"
+BRV_SETTINGS_FILE="${BRV_GLOBAL_DATA_DIR}/settings.json"
 
 BRV_PROJECT_DIR="/opt/data/byterover"
-BRV_CLIENT_BIN="${XDG_DATA_HOME}/brv/client/bin/brv"
+BRV_CLIENT_BIN="${BRV_INSTALL_DIR}/bin/brv"
 BRV_EXPECTED_BIN="${BRV_EXPECTED_BIN:-${BRV_CLIENT_BIN}}"
 
 # Explicit PATH order:
-# - Prefer ByteRover client bin (avoid .brv-cli shadowing).
+# - Prefer the single canonical ByteRover install under /opt/data.
 # - Keep Hermes CLI + venv early.
-export PATH="${XDG_DATA_HOME}/brv/client/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export PATH="${BRV_INSTALL_DIR}/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 mkdir -p \
-  "/opt/data/.local/bin" \
+  "${BRV_INSTALL_DIR}" \
+  "${BRV_GLOBAL_DATA_DIR}" \
   "${XDG_DATA_HOME}" \
   "${XDG_CONFIG_HOME}" \
   "/opt/data/logs" \
   "/opt/data/sessions" \
   "${BRV_PROJECT_DIR}"
 
-# Expose brv in /opt/data/.local/bin as a convenience, but ONLY if it points to
-# the canonical client bin (never to ~/.brv-cli).
-if [ -x "${BRV_CLIENT_BIN}" ]; then
-  ln -sf "${BRV_CLIENT_BIN}" "/opt/data/.local/bin/brv" || true
+# Remove legacy/shadow installs that caused duplicate ByteRover clients/daemons.
+# Keep this on by default because /opt/data is persistent across restarts.
+if [ "${BRV_CLEAN_LEGACY_INSTALLS:-1}" = "1" ]; then
+  rm -rf "/opt/data/.brv-cli" "${XDG_DATA_HOME}/brv/client" 2>/dev/null || true
+  rm -f "/opt/data/.local/bin/brv" 2>/dev/null || true
 fi
+
+# Disable ByteRover background auto-update by default. This avoids extra
+# update processes inside the tenant runtime while preserving manual updates.
+if [ "${BRV_DISABLE_AUTOUPDATE:-1}" = "1" ] && command -v python3 >/dev/null 2>&1; then
+  python3 - "$BRV_SETTINGS_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+path.parent.mkdir(parents=True, exist_ok=True)
+
+data = {"schemaVersion": "2", "values": {}}
+if path.exists():
+    try:
+        current = json.loads(path.read_text())
+        if isinstance(current, dict):
+            data.update({k: v for k, v in current.items() if k != "values"})
+            if isinstance(current.get("values"), dict):
+                data["values"].update(current["values"])
+    except Exception:
+        pass
+
+data.setdefault("schemaVersion", "2")
+data.setdefault("values", {})
+data["values"]["update.checkForUpdates"] = False
+path.write_text(json.dumps(data))
+PY
+fi
+
+# The upstream installer appends ~/.brv-cli/bin to shell startup files even
+# when we force a different install dir. Remove those legacy entries so every
+# future shell resolves the canonical persistent path only.
+clean_shell_path_refs() {
+  target="$1"
+  [ -f "$target" ] || return 0
+  tmp="$(mktemp)"
+  grep -v '\.brv-cli/bin' "$target" > "$tmp" || true
+  mv "$tmp" "$target"
+}
+
+clean_all_shell_path_refs() {
+  clean_shell_path_refs "$HOME/.profile"
+  clean_shell_path_refs "$HOME/.bashrc"
+  clean_shell_path_refs "$HOME/.zshrc"
+}
+
+ensure_shell_path_ref() {
+  target="$1"
+  [ -f "$target" ] || return 0
+  line='export PATH="$HOME/.local/share/brv-cli/bin:$PATH"'
+  grep -Fqx "$line" "$target" 2>/dev/null && return 0
+  printf '\n%s\n' "$line" >> "$target"
+}
+
+ensure_all_shell_path_refs() {
+  ensure_shell_path_ref "$HOME/.profile"
+  ensure_shell_path_ref "$HOME/.bashrc"
+  ensure_shell_path_ref "$HOME/.zshrc"
+}
+
+clean_all_shell_path_refs
+ensure_all_shell_path_refs
 
 # Seed files only if missing (keep user's persistent versions intact).
 if [ ! -f "$HOME/config.yaml" ] && [ -f /opt/hermes/bootstrap/config.yaml ]; then
@@ -52,16 +120,20 @@ if [ "${BRV_AUTO_INSTALL:-1}" = "1" ] && [ ! -x "${BRV_CLIENT_BIN}" ]; then
   # Best-effort install: rely on HOME/XDG_* to steer install into the volume.
   # Do not fail startup if the installer is slow or unavailable.
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL https://byterover.dev/install.sh | sh >/dev/null 2>&1 || true
+    curl -fsSL https://byterover.dev/install.sh | BRV_INSTALL_DIR="${BRV_INSTALL_DIR}" sh >/dev/null 2>&1 || true
   fi
 
-  # Normalize: only link /opt/data/.local/bin/brv if the canonical client exists.
   if [ -x "${BRV_CLIENT_BIN}" ]; then
-    ln -sf "${BRV_CLIENT_BIN}" "/opt/data/.local/bin/brv" >/dev/null 2>&1 || true
+    echo "[entrypoint] ByteRover client installed at ${BRV_CLIENT_BIN}" >&2
   else
     echo "[entrypoint] WARNING: ByteRover client still not found at ${BRV_CLIENT_BIN}. Startup will continue without brv." >&2
   fi
 fi
+
+# The installer may rewrite shell startup files after our pre-clean. Run the
+# cleanup again so every later shell stays aligned with the canonical install.
+clean_all_shell_path_refs
+ensure_all_shell_path_refs
 
 # Validate which brv will be used (help detect PATH shadowing).
 if command -v brv >/dev/null 2>&1; then

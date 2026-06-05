@@ -18,5 +18,9 @@ RUN chmod +x /opt/hermes/entrypoint.sh
 
 USER hermes
 ENV HOME=/opt/data
+ENV XDG_DATA_HOME=/opt/data/.local/share
+ENV XDG_CONFIG_HOME=/opt/data/.config
+ENV BRV_INSTALL_DIR=/opt/data/.local/share/brv-cli
+ENV PATH=/opt/data/.local/share/brv-cli/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 ENTRYPOINT ["/opt/hermes/entrypoint.sh"]

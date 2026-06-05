@@ -50,11 +50,12 @@ O script imprime o path/volume clonado que você deve montar como `/opt/data` no
 
 O `entrypoint.sh` tenta garantir que o ByteRover CLI (`brv`) exista no volume persistente e que o bin resolvido seja o **client canônico**:
 
-- Bin canônico: `/opt/data/.local/share/brv/client/bin/brv`
-- `PATH` prioriza: `/opt/data/.local/share/brv/client/bin` (evita shadowing por instalações antigas)
-- Symlink (opcional): `/opt/data/.local/bin/brv -> /opt/data/.local/share/brv/client/bin/brv`
+- Bin canônico: `/opt/data/.local/share/brv-cli/bin/brv`
+- `PATH` prioriza: `/opt/data/.local/share/brv-cli/bin`
+- O entrypoint remove instalações antigas em `/opt/data/.brv-cli`, cache oclif em `/opt/data/.local/share/brv/client` e symlink antigo em `/opt/data/.local/bin/brv` para evitar shadowing e daemons duplicados.
 
 Para desabilitar: defina `BRV_AUTO_INSTALL=0` nas env vars.
+Para não limpar instalações antigas no boot: defina `BRV_CLEAN_LEGACY_INSTALLS=0`.
 
 ### Conectar provider automaticamente
 
@@ -90,6 +91,7 @@ command -v brv
 brv --version
 cd /opt/data/byterover && brv status --format json
 ps -eo pid,ppid,etime,pcpu,pmem,cmd | grep -E "brv-server\\.js|agent-process\\.js" | grep -v grep
+ls -la /opt/data/.local/share/brv-cli/bin/brv
 cat /opt/data/.local/share/brv/daemon.json 2>/dev/null || true
 ```
 

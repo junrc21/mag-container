@@ -17,6 +17,18 @@ if command -v brv >/dev/null 2>&1; then
 else
   echo "brv: NOT FOUND"
 fi
+echo "expected brv: ${BRV_INSTALL_DIR:-/opt/data/.local/share/brv-cli}/bin/brv"
+ls -la "${BRV_INSTALL_DIR:-/opt/data/.local/share/brv-cli}/bin/brv" 2>/dev/null || true
+echo
+
+echo "== legacy ByteRover paths =="
+for path in /opt/data/.brv-cli /opt/data/.local/share/brv/client /opt/data/.local/bin/brv; do
+  if [ -e "${path}" ] || [ -L "${path}" ]; then
+    ls -la "${path}" || true
+  else
+    echo "not found: ${path}"
+  fi
+done
 echo
 
 echo "== ByteRover project =="
@@ -49,4 +61,3 @@ if [ -f "${DAEMON_JSON}" ]; then
 else
   echo "not found: ${DAEMON_JSON}"
 fi
-
