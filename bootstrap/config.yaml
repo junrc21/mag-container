@@ -31,6 +31,23 @@ auxiliary:
 memory:
   provider: byterover
 
+# Anti-noise: the end user must NEVER see engineering output on a channel
+# (tool calls, status, terminal, reasoning, heartbeats, token streaming). The
+# global display.<key> beats every platform's tier default, so this covers all
+# channels (Telegram/WhatsApp/Slack/…). The MAG control plane emits the same
+# block per-tenant in the generated config.yaml; this is the image default.
+display:
+  show_reasoning: false
+  tool_progress: "off"
+  tool_preview_length: 0
+  interim_assistant_messages: false
+  long_running_notifications: false
+  busy_ack_detail: false
+  cleanup_progress: true
+
+streaming:
+  enabled: false
+
 stt:
   enabled: true
   provider: local

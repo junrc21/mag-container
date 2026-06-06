@@ -10,6 +10,7 @@ RUN mkdir -p /opt/hermes/bootstrap && chown -R hermes:hermes /opt/hermes/bootstr
 COPY --chown=hermes:hermes bootstrap/config.yaml /opt/hermes/bootstrap/config.yaml
 COPY --chown=hermes:hermes bootstrap/soul.md /opt/hermes/bootstrap/soul.md
 COPY --chown=hermes:hermes bootstrap/patch_byterover_plugin.py /opt/hermes/bootstrap/patch_byterover_plugin.py
+COPY --chown=hermes:hermes bootstrap/patch_gateway_output.py /opt/hermes/bootstrap/patch_gateway_output.py
 COPY --chown=hermes:hermes entrypoint.sh /opt/hermes/entrypoint.sh
 
 # MAG Google Workspace MCP server (stdio, zero-dependency Node). The MAG control
@@ -31,6 +32,10 @@ RUN cd /opt/mag/docreader && npm install --omit=dev --no-audit --no-fund && chow
 COPY --chown=hermes:hermes mcp/docreader/server.mjs /opt/mag/docreader/server.mjs
 
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_byterover_plugin.py
+
+# Anti-noise: extend the gateway's Telegram-only status/error sanitization to
+# every end-user channel + humanize provider-error copy (see the script header).
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_gateway_output.py
 
 RUN chmod +x /opt/hermes/entrypoint.sh
 
