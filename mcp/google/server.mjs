@@ -337,7 +337,7 @@ const tools = {
   },
 
   calendar_create_event: {
-    description: 'Cria um evento na agenda (opcionalmente com link do Google Meet). Ação que escreve — confirme antes.',
+    description: 'Cria um evento/reunião na agenda (opcionalmente com link do Google Meet). Se houver convidados (attendees), envia o convite por e-mail a eles. Ação que escreve — confirme antes.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -361,12 +361,19 @@ const tools = {
         start: { dateTime: args.start },
         end: { dateTime: args.end },
       };
-      if (args.attendees?.length) body.attendees = args.attendees.map((email) => ({ email }));
-      let url = `${CALENDAR}/calendars/${cal}/events`;
+      const params = new URLSearchParams();
+      if (args.attendees?.length) {
+        body.attendees = args.attendees.map((email) => ({ email }));
+        // Actually email the invite/update to the guests (default would add them
+        // silently). Lets the agent "agendar e convidar" in one step.
+        params.set('sendUpdates', 'all');
+      }
       if (args.addMeet) {
         body.conferenceData = { createRequest: { requestId: `mag-${Date.now()}`, conferenceSolutionKey: { type: 'hangoutsMeet' } } };
-        url += '?conferenceDataVersion=1';
+        params.set('conferenceDataVersion', '1');
       }
+      const qs = params.toString();
+      const url = `${CALENDAR}/calendars/${cal}/events${qs ? `?${qs}` : ''}`;
       const ev = await gfetch(token, url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
