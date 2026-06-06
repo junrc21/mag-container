@@ -25,14 +25,6 @@ COPY mcp/docreader/package.json /opt/mag/docreader/package.json
 RUN cd /opt/mag/docreader && npm install --omit=dev --no-audit --no-fund && chown -R hermes:hermes /opt/mag/docreader
 COPY --chown=hermes:hermes mcp/docreader/server.mjs /opt/mag/docreader/server.mjs
 
-# Pin the ByteRover CLI to 3.14.0. Newer 3.16.x REGRESSED curate: the
-# intermittent "empty Gemini candidate" error became FATAL to the write (so
-# memory silently never persists), and HITL review defaults ON (only stages
-# curations). 3.14.0 persists reliably (verified 3/3 vs ~0/5 on 3.16.1). Baked
-# into the image so it wins over any volume-installed copy via PATH + BRV_BIN.
-RUN npm install --prefix /opt/mag/brv-cli byterover-cli@3.14.0 --no-audit --no-fund \
-    && chown -R hermes:hermes /opt/mag/brv-cli
-
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_byterover_plugin.py
 
 RUN chmod +x /opt/hermes/entrypoint.sh

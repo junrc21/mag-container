@@ -16,18 +16,13 @@ BRV_GLOBAL_DATA_DIR="${BRV_GLOBAL_DATA_DIR:-${XDG_DATA_HOME}/brv}"
 BRV_SETTINGS_FILE="${BRV_GLOBAL_DATA_DIR}/settings.json"
 
 BRV_PROJECT_DIR="/opt/data/byterover"
-# Pinned ByteRover CLI baked into the image (3.14.0). See Dockerfile for why.
-BRV_PINNED_BIN_DIR="/opt/mag/brv-cli/node_modules/.bin"
-BRV_CLIENT_BIN="${BRV_PINNED_BIN_DIR}/brv"
+BRV_CLIENT_BIN="${BRV_INSTALL_DIR}/bin/brv"
 BRV_EXPECTED_BIN="${BRV_EXPECTED_BIN:-${BRV_CLIENT_BIN}}"
-# Do NOT auto-install the latest brv into the volume by default — the baked,
-# pinned 3.14.0 is the one we want (newer releases break curate).
-export BRV_AUTO_INSTALL="${BRV_AUTO_INSTALL:-0}"
 
 # Explicit PATH order:
-# - Prefer the PINNED, image-baked ByteRover CLI (wins over any volume copy).
+# - Prefer the single canonical ByteRover install under /opt/data.
 # - Keep Hermes CLI + venv early.
-export PATH="${BRV_PINNED_BIN_DIR}:${BRV_INSTALL_DIR}/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export PATH="${BRV_INSTALL_DIR}/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 mkdir -p \
   "${BRV_INSTALL_DIR}" \
