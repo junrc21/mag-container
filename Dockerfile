@@ -37,6 +37,11 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_byterover_plugin.p
 # every end-user channel + humanize provider-error copy (see the script header).
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_gateway_output.py
 
+# Web search backend: ddgs (DuckDuckGo) — keyless, headless (no Chrome). The
+# config pins web.backend=ddgs so the agent gets REAL results instead of trying
+# the browser tool (no Chrome in this image) or an unconfigured paid provider.
+RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/python3 ddgs
+
 RUN chmod +x /opt/hermes/entrypoint.sh
 
 USER hermes

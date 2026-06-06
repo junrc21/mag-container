@@ -48,6 +48,10 @@ display:
 streaming:
   enabled: false
 
+# Web search/extract via ddgs (DuckDuckGo) — keyless, no browser/Chrome needed.
+web:
+  backend: ddgs
+
 stt:
   enabled: true
   provider: local

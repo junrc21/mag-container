@@ -12,9 +12,14 @@ secrets. This patch:
   3. Replaces the English "check gateway logs" provider-error copy with humane
      pt-BR product copy in two tiers: transient (try again) vs critical (contact
      support) so the user doesn't retry a hard failure forever.
+  4. Scrubs engineering/tooling tells the MODEL may put in its FINAL answer
+     (install hints, tracebacks, missing-dependency/API-key mentions). These are
+     not provider-error envelopes, so they bypass (3) — replace the whole message
+     with a humane line.
 
-Idempotent + fail-loud: re-running is a no-op, and a missing anchor aborts the
-build (so an upstream Hermes change is caught instead of silently leaking).
+Each edit is independently idempotent + fail-loud: re-running applies only the
+missing edits, and an anchor that is neither in its original NOR patched form
+aborts the build (so an upstream Hermes change is caught, not silently leaked).
 """
 
 import os
@@ -26,11 +31,11 @@ RUN_PY = pathlib.Path(os.getenv("GATEWAY_RUN_PY", "/opt/hermes/gateway/run.py"))
 # Internal, non-channel surfaces that must keep raw output.
 INTERNAL_GUARD = 'if _gateway_platform_value(platform) in {"api_server", "local", "cli"}:'
 
+# --- Edit 1: invert the Telegram-only guard (appears in BOTH sanitizers) -------
 OLD_GUARD = '    if _gateway_platform_value(platform) != "telegram":\n        return text\n'
 NEW_GUARD = '    ' + INTERNAL_GUARD + '\n        return text\n'
 
-# Status function tail: after redaction + noisy-regex + provider-error rewrite,
-# the stock code returns the raw status text. On end-user channels we drop it.
+# --- Edit 2: drop non-error status chatter on end-user channels ----------------
 OLD_STATUS_TAIL = (
     "    if _looks_like_gateway_provider_error(text):\n"
     "        return _gateway_provider_error_reply(text)\n"
@@ -42,8 +47,10 @@ NEW_STATUS_TAIL = (
     "    return None  # MAG: drop lifecycle/status chatter on end-user channels\n"
 )
 
-# Humane pt-BR provider-error copy (two tiers). Replaces the whole function body
-# via regex so it's robust to the original string formatting.
+# --- Edit 3: humane pt-BR provider-error copy (replace the whole function) ------
+ERROR_FN_RE = re.compile(
+    r"def _gateway_provider_error_reply\(text: str\) -> str:\n(?:.*\n)*?    \)\n"
+)
 NEW_ERROR_REPLY = '''def _gateway_provider_error_reply(text: str) -> str:
     """MAG: map raw provider/API errors to humane pt-BR copy (no internals)."""
     if _GATEWAY_AUTH_ERROR_RE.search(text):
@@ -60,44 +67,102 @@ NEW_ERROR_REPLY = '''def _gateway_provider_error_reply(text: str) -> str:
         "Por favor, contate o suporte da CyriusX."
     )
 '''
+NEW_ERROR_MARKER = "MAG: map raw provider/API errors to humane pt-BR copy"
+
+# --- Edit 4: scrub engineering/tooling leaks from the FINAL answer -------------
+LEAK_CONSTS = '''# MAG: scrub engineering/tooling tells the model may put in its FINAL answer
+# (install hints, tracebacks, missing dependency/API-key mentions). Not provider
+# error envelopes, so they bypass the rewrite above — replace with a humane line.
+_MAG_ENGINEERING_LEAK_RE = re.compile(
+    r"("
+    r"não foi possível iniciar o navegador"
+    r"|could not (?:start|launch) (?:the )?browser"
+    r"|chrome.{0,24}(?:não|nao|not|isn.?t).{0,8}instalad"
+    r"|chrome.{0,24}not installed"
+    r"|agent-browser install"
+    r"|(?:uv |python -m )?pip install"
+    r"|\\b[A-Z][A-Z0-9_]{2,}_API_(?:KEY|URL)\\b"
+    r"|SEARXNG_URL"
+    r"|Traceback \\(most recent call last\\)"
+    r"|ModuleNotFoundError|ImportError"
+    r"|`hermes (?:model|tools)|run `hermes|rode `hermes"
+    r"|não está instalad|nao esta instalad|not installed"
+    r")",
+    re.IGNORECASE,
+)
+_MAG_GENERIC_FAILURE_REPLY = (
+    "Não consegui concluir isso agora. Pode tentar de novo em instantes? "
+    "Se continuar, fale com o suporte da CyriusX."
+)
+
+
+def _sanitize_gateway_final_response'''
+LEAK_ANCHOR = "def _sanitize_gateway_final_response"
+
+OLD_SANITIZE_TAIL = (
+    "    redacted = _redact_gateway_user_facing_secrets(str(text))\n"
+    "    if _looks_like_gateway_provider_error(redacted):\n"
+    "        return _gateway_provider_error_reply(redacted)\n"
+    "    return redacted\n"
+)
+NEW_SANITIZE_TAIL = (
+    "    redacted = _redact_gateway_user_facing_secrets(str(text))\n"
+    "    if _looks_like_gateway_provider_error(redacted):\n"
+    "        return _gateway_provider_error_reply(redacted)\n"
+    "    if _MAG_ENGINEERING_LEAK_RE.search(redacted):\n"
+    "        return _MAG_GENERIC_FAILURE_REPLY\n"
+    "    return redacted\n"
+)
 
 
 def main() -> None:
     if not RUN_PY.exists():
         raise SystemExit(f"gateway run.py not found at {RUN_PY}")
     text = RUN_PY.read_text()
+    edits = 0
 
-    if INTERNAL_GUARD in text:
-        print("OK: gateway output already patched (idempotent no-op)")
+    # Edit 1 — invert the Telegram-only guard in both sanitizers.
+    if OLD_GUARD in text:
+        if text.count(OLD_GUARD) < 2:
+            raise SystemExit("patch_gateway_output: expected >=2 Telegram guards.")
+        text = text.replace(OLD_GUARD, NEW_GUARD)
+        edits += 1
+    elif INTERNAL_GUARD not in text:
+        raise SystemExit("patch_gateway_output: guard anchor missing (Hermes changed).")
+
+    # Edit 2 — drop non-error status chatter.
+    if OLD_STATUS_TAIL in text:
+        text = text.replace(OLD_STATUS_TAIL, NEW_STATUS_TAIL, 1)
+        edits += 1
+    elif NEW_STATUS_TAIL not in text:
+        raise SystemExit("patch_gateway_output: status-tail anchor missing.")
+
+    # Edit 3 — humane provider-error copy.
+    if NEW_ERROR_MARKER not in text:
+        new_text, n = ERROR_FN_RE.subn(lambda _m: NEW_ERROR_REPLY, text, count=1)
+        if n != 1:
+            raise SystemExit("patch_gateway_output: _gateway_provider_error_reply not found.")
+        text = new_text
+        edits += 1
+
+    # Edit 4 — engineering-leak scrub on final answers.
+    if "_MAG_ENGINEERING_LEAK_RE" not in text:
+        if LEAK_ANCHOR not in text:
+            raise SystemExit("patch_gateway_output: sanitize-fn anchor missing.")
+        text = text.replace(LEAK_ANCHOR, LEAK_CONSTS, 1)
+        edits += 1
+    if NEW_SANITIZE_TAIL not in text:
+        if OLD_SANITIZE_TAIL not in text:
+            raise SystemExit("patch_gateway_output: sanitize-tail anchor missing.")
+        text = text.replace(OLD_SANITIZE_TAIL, NEW_SANITIZE_TAIL, 1)
+        edits += 1
+
+    if edits == 0:
+        print("OK: gateway output already fully patched (idempotent no-op)")
         return
 
-    # 1. Invert the Telegram-only guard in BOTH sanitizers (identical 2-line block).
-    count_guard = text.count(OLD_GUARD)
-    if count_guard < 2:
-        raise SystemExit(
-            f"patch_gateway_output: expected >=2 Telegram guards, found {count_guard}. "
-            "Hermes gateway changed — review before shipping."
-        )
-    text = text.replace(OLD_GUARD, NEW_GUARD)
-
-    # 2. Drop non-error status chatter on end-user channels.
-    if OLD_STATUS_TAIL not in text:
-        raise SystemExit("patch_gateway_output: status-message tail anchor not found.")
-    text = text.replace(OLD_STATUS_TAIL, NEW_STATUS_TAIL, 1)
-
-    # 3. Humane pt-BR provider-error copy (replace the whole function body).
-    new_text, n = re.subn(
-        r"def _gateway_provider_error_reply\(text: str\) -> str:\n(?:.*\n)*?    \)\n",
-        lambda _m: NEW_ERROR_REPLY,  # function repl: re won't process backslashes
-        text,
-        count=1,
-    )
-    if n != 1:
-        raise SystemExit("patch_gateway_output: _gateway_provider_error_reply not found.")
-    text = new_text
-
     RUN_PY.write_text(text)
-    print(f"OK: patched {RUN_PY} (channel sanitization + humane error copy)")
+    print(f"OK: patched {RUN_PY} ({edits} edit(s) applied)")
 
 
 if __name__ == "__main__":
