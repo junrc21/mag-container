@@ -53,10 +53,11 @@ web:
   backend: ddgs
 
 # Approvals: the end user must NEVER see an approve once/session/always prompt.
-# mode "off" never prompts the channel; HARDLINE blocklist + sensitive-path
-# protection + per-tenant container isolation are the safety floor.
+# mode "async" queues dangerous commands to the CyriusX support panel instead of
+# prompting/blocking the user. HARDLINE + sensitive-path protection + per-tenant
+# container isolation remain the safety floor.
 approvals:
-  mode: "off"
+  mode: "async"
   cron_mode: "deny"
   mcp_reload_confirm: false
   destructive_slash_confirm: false
