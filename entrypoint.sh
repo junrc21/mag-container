@@ -197,13 +197,19 @@ if [ "${BRV_CONNECT_ON_BOOT:-0}" = "1" ] && command -v brv >/dev/null 2>&1; then
       exit 0
     fi
 
+    # Pin a STABLE Gemini model for ByteRover. brv's default is a preview model
+    # (gemini-3-flash-preview) that hits "high demand" rate limits, causing 4x
+    # retries (~2min each) on every curate/query — which stalls memory writes and
+    # the synchronous prefetch read. gemini-2.5-flash (GA) is fast and reliable.
+    BRV_MODEL="${BRV_MODEL:-gemini-2.5-flash}"
+
     # If already connected, do nothing. Providers list may be slow; cap time.
     if command -v timeout >/dev/null 2>&1; then
       timeout 10s brv providers list 2>/dev/null | grep -qiE 'google|gemini' && exit 0
-      timeout 15s brv providers connect google --api-key "${API_KEY}" >/dev/null 2>&1 || true
+      timeout 20s brv providers connect google --api-key "${API_KEY}" --model "${BRV_MODEL}" >/dev/null 2>&1 || true
     else
       brv providers list 2>/dev/null | grep -qiE 'google|gemini' && exit 0
-      brv providers connect google --api-key "${API_KEY}" >/dev/null 2>&1 || true
+      brv providers connect google --api-key "${API_KEY}" --model "${BRV_MODEL}" >/dev/null 2>&1 || true
     fi
   ) >/dev/null 2>&1 &
 fi
