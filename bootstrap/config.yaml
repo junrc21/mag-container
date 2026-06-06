@@ -48,6 +48,11 @@ display:
 streaming:
   enabled: false
 
+# Cron deliveries go to the user clean — no "Cronjob Response / job_id / stop this
+# job" engineering wrapper.
+cron:
+  wrap_response: false
+
 # Web search/extract via ddgs (DuckDuckGo) — keyless, no browser/Chrome needed.
 web:
   backend: ddgs
