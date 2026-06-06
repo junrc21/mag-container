@@ -14,12 +14,13 @@ COPY --chown=hermes:hermes entrypoint.sh /opt/hermes/entrypoint.sh
 
 # MAG Google Workspace MCP server (stdio, zero-dependency Node). The MAG control
 # plane wires it per-tenant via mcp_servers.google in the generated config.yaml.
-RUN mkdir -p /opt/mag/google-mcp /opt/mag/linear-mcp && chown -R hermes:hermes /opt/mag
+RUN mkdir -p /opt/mag/google-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp && chown -R hermes:hermes /opt/mag
 COPY --chown=hermes:hermes mcp/google/server.mjs /opt/mag/google-mcp/server.mjs
 
-# MAG Linear MCP server (stdio, zero-dependency Node). Uses the connector token
-# the user authorized in Fontes (fetched per-call from the MAG control plane).
+# MAG Linear + ClickUp MCP servers (stdio, zero-dependency Node). Use the connector
+# token the user authorized in Fontes (fetched per-call from the MAG control plane).
 COPY --chown=hermes:hermes mcp/linear/server.mjs /opt/mag/linear-mcp/server.mjs
+COPY --chown=hermes:hermes mcp/clickup/server.mjs /opt/mag/clickup-mcp/server.mjs
 
 # MAG Document Reader MCP (stdio, Node + pdf/docx/xlsx libs). Extracts text from
 # uploaded documents so the agent can absorb it into ByteRover. Deps are installed
