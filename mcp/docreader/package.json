@@ -1,0 +1,11 @@
+{
+  "name": "mag-docreader-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MAG document-reader MCP server (PDF/Word/Excel/text extraction for ByteRover ingestion)",
+  "dependencies": {
+    "mammoth": "^1.8.0",
+    "pdf-parse": "^1.1.1",
+    "xlsx": "^0.18.5"
+  }
+}

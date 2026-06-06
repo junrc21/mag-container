@@ -16,13 +16,18 @@ BRV_GLOBAL_DATA_DIR="${BRV_GLOBAL_DATA_DIR:-${XDG_DATA_HOME}/brv}"
 BRV_SETTINGS_FILE="${BRV_GLOBAL_DATA_DIR}/settings.json"
 
 BRV_PROJECT_DIR="/opt/data/byterover"
-BRV_CLIENT_BIN="${BRV_INSTALL_DIR}/bin/brv"
+# Pinned ByteRover CLI baked into the image (3.14.0). See Dockerfile for why.
+BRV_PINNED_BIN_DIR="/opt/mag/brv-cli/node_modules/.bin"
+BRV_CLIENT_BIN="${BRV_PINNED_BIN_DIR}/brv"
 BRV_EXPECTED_BIN="${BRV_EXPECTED_BIN:-${BRV_CLIENT_BIN}}"
+# Do NOT auto-install the latest brv into the volume by default — the baked,
+# pinned 3.14.0 is the one we want (newer releases break curate).
+export BRV_AUTO_INSTALL="${BRV_AUTO_INSTALL:-0}"
 
 # Explicit PATH order:
-# - Prefer the single canonical ByteRover install under /opt/data.
+# - Prefer the PINNED, image-baked ByteRover CLI (wins over any volume copy).
 # - Keep Hermes CLI + venv early.
-export PATH="${BRV_INSTALL_DIR}/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export PATH="${BRV_PINNED_BIN_DIR}:${BRV_INSTALL_DIR}/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 mkdir -p \
   "${BRV_INSTALL_DIR}" \
@@ -203,14 +208,21 @@ if [ "${BRV_CONNECT_ON_BOOT:-0}" = "1" ] && command -v brv >/dev/null 2>&1; then
     # the synchronous prefetch read. gemini-2.5-flash (GA) is fast and reliable.
     BRV_MODEL="${BRV_MODEL:-gemini-2.5-flash}"
 
-    # If already connected, do nothing. Providers list may be slow; cap time.
-    if command -v timeout >/dev/null 2>&1; then
-      timeout 10s brv providers list 2>/dev/null | grep -qiE 'google|gemini' && exit 0
-      timeout 20s brv providers connect google --api-key "${API_KEY}" --model "${BRV_MODEL}" >/dev/null 2>&1 || true
-    else
-      brv providers list 2>/dev/null | grep -qiE 'google|gemini' && exit 0
-      brv providers connect google --api-key "${API_KEY}" --model "${BRV_MODEL}" >/dev/null 2>&1 || true
-    fi
+    # Pick a timeout wrapper (longer than before: a 20s cap was killing the
+    # provider connect mid-handshake on fresh tenants, leaving brv with NO
+    # provider connected — which makes every curate fail).
+    TO_CONNECT="timeout 75s"
+    command -v timeout >/dev/null 2>&1 || TO_CONNECT=""
+
+    # Connect the Google/Gemini provider unless already connected. `providers
+    # list` can hang when the daemon is still starting, so it is NOT used as a
+    # gate — connect is effectively idempotent.
+    ${TO_CONNECT} brv providers connect google --api-key "${API_KEY}" --model "${BRV_MODEL}" >/dev/null 2>&1 || true
+
+    # Curations must AUTO-APPLY. Newer brv ships HITL review ON by default, which
+    # only *stages* curations (brv review approve/reject) instead of writing them
+    # — so memory silently never persists. Disable it for this project.
+    ${TO_CONNECT} brv review --disable >/dev/null 2>&1 || true
   ) >/dev/null 2>&1 &
 fi
 
