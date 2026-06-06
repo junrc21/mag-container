@@ -52,6 +52,20 @@ streaming:
 web:
   backend: ddgs
 
+# Approvals: the end user must NEVER see an approve once/session/always prompt.
+# mode "off" never prompts the channel; HARDLINE blocklist + sensitive-path
+# protection + per-tenant container isolation are the safety floor.
+approvals:
+  mode: "off"
+  cron_mode: "deny"
+  mcp_reload_confirm: false
+  destructive_slash_confirm: false
+
+# Remove high-blast-radius toolsets the product never needs. code_execution/file
+# stay (sandboxed to the isolated per-tenant workspace) for file generation.
+agent:
+  disabled_toolsets: ["terminal", "computer_use", "browser", "homeassistant", "discord_admin"]
+
 stt:
   enabled: true
   provider: local
