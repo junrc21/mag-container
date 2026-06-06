@@ -71,12 +71,18 @@ const ISSUE_FIELDS = 'id identifier title priority state { name } assignee { nam
 
 async function resolveIssueId(idOrIdentifier) {
   if (isUuid(idOrIdentifier)) return idOrIdentifier;
-  // identifier like CX-289 → search
-  const d = await gql('query($q:String!){ issueSearch(query:$q, first:5){ nodes { id identifier } } }', { q: idOrIdentifier });
-  const nodes = d?.issueSearch?.nodes || [];
-  const exact = nodes.find((n) => (n.identifier || '').toLowerCase() === idOrIdentifier.toLowerCase());
-  if (!exact && !nodes.length) throw new Error(`Issue "${idOrIdentifier}" não encontrada.`);
-  return (exact || nodes[0]).id;
+  // identifier like CX-289 → resolve by team key + number (issueSearch is deprecated)
+  const m = /^([A-Za-z][A-Za-z0-9]*)-(\d+)$/.exec((idOrIdentifier || '').trim());
+  if (!m) throw new Error(`Identificador inválido: "${idOrIdentifier}". Use TIME-NÚMERO (ex.: CX-290) ou o id.`);
+  const team = m[1].toUpperCase();
+  const num = Number(m[2]);
+  const d = await gql(
+    'query($num:Float!,$team:String!){ issues(filter:{ number:{ eq:$num }, team:{ key:{ eq:$team } } }, first:1){ nodes { id identifier } } }',
+    { num, team },
+  );
+  const node = d?.issues?.nodes?.[0];
+  if (!node) throw new Error(`Issue "${idOrIdentifier}" não encontrada.`);
+  return node.id;
 }
 
 // ── tools ───────────────────────────────────────────────────────────────────
@@ -136,11 +142,11 @@ const tools = {
     },
     async run(args) {
       const n = Math.min(args.limit || 10, 50);
-      const d = await gql(`query($q:String!,$n:Int!){ issueSearch(query:$q, first:$n){ nodes { ${ISSUE_FIELDS} } } }`, {
+      const d = await gql(`query($q:String!,$n:Int!){ searchIssues(term:$q, first:$n){ nodes { ${ISSUE_FIELDS} } } }`, {
         q: args.query,
         n,
       });
-      const out = (d.issueSearch?.nodes || []).map((i) => ({
+      const out = (d.searchIssues?.nodes || []).map((i) => ({
         id: i.id,
         identifier: i.identifier,
         title: i.title,
