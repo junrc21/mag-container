@@ -78,6 +78,12 @@ RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/
 # availability allow-list and doesn't know it otherwise). See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_web_extract_free.py
 
+# WhatsApp (Baileys) bridge: stop the silent drops. On loggedOut it re-arms pairing
+# instead of process.exit(1); reconnects with capped backoff; and exposes /qr + /status
+# so the control plane can drive QR pairing from the web. See script header.
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_bridge.py /opt/hermes/bootstrap/patch_whatsapp_bridge.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_bridge.py
+
 RUN chmod +x /opt/hermes/entrypoint.sh
 
 USER hermes
