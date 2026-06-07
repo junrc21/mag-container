@@ -83,7 +83,17 @@ def check_all_command_guards(command: str, env_type: str,'''
 HELPERS_ANCHOR = "def check_all_command_guards(command: str, env_type: str,"
 
 ROUTE_ANCHOR = "    # --yolo or approvals.mode=off: bypass all approval prompts.\n"
-ROUTE_BLOCK = '''    # MAG: async support-approval routing (approvals.mode == "async"). Dangerous
+ROUTE_BLOCK = '''    # MAG: staff/admin internal surfaces have FULL authority — never prompt, never
+    # queue. These are reached ONLY by the CyriusX control plane (internal key):
+    # the api_server / local / cli platforms, or a session key tagged "admin:".
+    # The end user is always on a channel, never here. HARDLINE floors above still
+    # block unconditionally, so even god-mode cannot rm -rf / the container.
+    _mag_platform0 = _mag_session_value("HERMES_SESSION_PLATFORM")
+    _mag_skey0 = _mag_session_value("HERMES_SESSION_KEY")
+    if _mag_platform0 in ("api_server", "local", "cli") or _mag_skey0.startswith("admin:"):
+        return {"approved": True, "message": None}
+
+    # MAG: async support-approval routing (approvals.mode == "async"). Dangerous
     # commands are queued to the CyriusX support panel; the user is never prompted.
     if _mag_async_approval_mode():
         _mag_is_dangerous, _mag_pk, _mag_desc = detect_dangerous_command(command)

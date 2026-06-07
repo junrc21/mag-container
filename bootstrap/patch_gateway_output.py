@@ -95,6 +95,32 @@ _MAG_GENERIC_FAILURE_REPLY = (
     "Se continuar, fale com o suporte da CyriusX."
 )
 
+# MAG: business-secret barrier. On END-USER channels the model must never reveal
+# our engineering/product internals: our stack codenames, the AI model/provider
+# powering it, source code, architecture, or "how it works" self-disclosure. If
+# any leaks into the FINAL answer, replace the whole message with a redirect to
+# official docs / support. NOTE: only OUR unique tells — client-side infra the
+# customer may legitimately run (Docker/Postgres/etc.) is intentionally excluded
+# to avoid false positives. Internal surfaces (api_server/local/cli) return raw
+# above and never reach this.
+_MAG_PRODUCT_SECRET_RE = re.compile(
+    r"("
+    r"\\bHermes\\b|\\bOpenClaw\\b|\\bByteRover\\b|\\bFastify\\b|\\bNeo4j\\b|\\bn8n\\b"
+    r"|\\bGemini\\b|\\bAnthropic\\b|\\bOpenAI\\b|\\bClaude\\b|\\bGPT-?\\d|\\bLLM\\b"
+    r"|large language model|modelo de linguagem|rede neural"
+    r"|c[óo]digo[\\s-]?fonte|source code"
+    r"|system prompt|prompt de sistema|meu prompt"
+    r"|minha arquitetura|como eu funciono|como funciono por dentro"
+    r"|fui (?:constru[íi]d|criad|desenvolvid|treinad)"
+    r"|sou basead[ao] em|rodo (?:em|sobre)"
+    r")",
+    re.IGNORECASE,
+)
+_MAG_DOC_REDIRECT_MSG = (
+    "Sobre os bastidores do produto eu não falo. Para esclarecer esse tipo de "
+    "dúvida, consulte a documentação oficial da CyriusX ou fale com o suporte."
+)
+
 
 def _sanitize_gateway_final_response'''
 LEAK_ANCHOR = "def _sanitize_gateway_final_response"
@@ -111,6 +137,8 @@ NEW_SANITIZE_TAIL = (
     "        return _gateway_provider_error_reply(redacted)\n"
     "    if _MAG_ENGINEERING_LEAK_RE.search(redacted):\n"
     "        return _MAG_GENERIC_FAILURE_REPLY\n"
+    "    if _MAG_PRODUCT_SECRET_RE.search(redacted):\n"
+    "        return _MAG_DOC_REDIRECT_MSG\n"
     "    return redacted\n"
 )
 
