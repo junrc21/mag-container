@@ -63,6 +63,16 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_hardcap.py
 # the browser tool (no Chrome in this image) or an unconfigured paid provider.
 RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/python3 ddgs
 
+# Free web EXTRACT backend: ddgs can only SEARCH; trafilatura extracts clean page
+# content with NO API key and NO browser. Bundled as a web plugin (auto-discovered)
+# and pinned via web.extract_backend=trafilatura in the generated config.
+COPY --chown=hermes:hermes plugins/web/trafilatura /opt/hermes/plugins/web/trafilatura
+COPY --chown=hermes:hermes bootstrap/patch_web_extract_free.py /opt/hermes/bootstrap/patch_web_extract_free.py
+RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/python3 trafilatura
+# Make the keyless trafilatura extract backend selectable (web_tools hardcodes the
+# availability allow-list and doesn't know it otherwise). See script header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_web_extract_free.py
+
 RUN chmod +x /opt/hermes/entrypoint.sh
 
 USER hermes
