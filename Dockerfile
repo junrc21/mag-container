@@ -14,6 +14,7 @@ COPY --chown=hermes:hermes bootstrap/patch_gateway_output.py /opt/hermes/bootstr
 COPY --chown=hermes:hermes bootstrap/patch_approval_async.py /opt/hermes/bootstrap/patch_approval_async.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_commands.py /opt/hermes/bootstrap/patch_disable_channel_commands.py
 COPY --chown=hermes:hermes bootstrap/patch_usage_tokens.py /opt/hermes/bootstrap/patch_usage_tokens.py
+COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
 COPY --chown=hermes:hermes entrypoint.sh /opt/hermes/entrypoint.sh
 
 # MAG Google Workspace MCP server (stdio, zero-dependency Node). The MAG control
@@ -52,6 +53,10 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_disable_channel_co
 # Usage metering: include per-turn token usage (tokens/cost/model) in the agent:end
 # hook so the control plane can record real LLM cost per turn. See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_usage_tokens.py
+
+# Credit hard cap (Fase 2): block client-channel turns before the agent runs when
+# the tenant is out of credits, with a humane message. See script header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_hardcap.py
 
 # Web search backend: ddgs (DuckDuckGo) — keyless, headless (no Chrome). The
 # config pins web.backend=ddgs so the agent gets REAL results instead of trying
