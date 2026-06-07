@@ -84,6 +84,14 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_web_extract_free.p
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_bridge.py /opt/hermes/bootstrap/patch_whatsapp_bridge.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_bridge.py
 
+# WhatsApp web pairing: a self-contained pairing module + 4 thin gateway routes
+# (/api/whatsapp/{pair,qr,status,logout}) so the control plane can drive QR pairing.
+# qrcode renders the QR string to a PNG data-URL server-side (Pillow already present).
+COPY --chown=hermes:hermes bootstrap/mag_whatsapp_pairing.py /opt/hermes/gateway/platforms/mag_whatsapp_pairing.py
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_gateway.py /opt/hermes/bootstrap/patch_whatsapp_gateway.py
+RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/python3 qrcode
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_gateway.py
+
 RUN chmod +x /opt/hermes/entrypoint.sh
 
 USER hermes
