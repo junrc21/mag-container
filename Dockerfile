@@ -13,6 +13,7 @@ COPY --chown=hermes:hermes bootstrap/patch_byterover_plugin.py /opt/hermes/boots
 COPY --chown=hermes:hermes bootstrap/patch_gateway_output.py /opt/hermes/bootstrap/patch_gateway_output.py
 COPY --chown=hermes:hermes bootstrap/patch_approval_async.py /opt/hermes/bootstrap/patch_approval_async.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_commands.py /opt/hermes/bootstrap/patch_disable_channel_commands.py
+COPY --chown=hermes:hermes bootstrap/patch_usage_tokens.py /opt/hermes/bootstrap/patch_usage_tokens.py
 COPY --chown=hermes:hermes entrypoint.sh /opt/hermes/entrypoint.sh
 
 # MAG Google Workspace MCP server (stdio, zero-dependency Node). The MAG control
@@ -47,6 +48,10 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_approval_async.py
 # users can't change the LLM model, restart/reset/yolo, etc. — only /start survives,
 # everything else becomes normal text. Also empties the Telegram "/" menu. See header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_disable_channel_commands.py
+
+# Usage metering: include per-turn token usage (tokens/cost/model) in the agent:end
+# hook so the control plane can record real LLM cost per turn. See script header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_usage_tokens.py
 
 # Web search backend: ddgs (DuckDuckGo) — keyless, headless (no Chrome). The
 # config pins web.backend=ddgs so the agent gets REAL results instead of trying
