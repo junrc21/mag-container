@@ -48,6 +48,11 @@ display:
 streaming:
   enabled: false
 
+# Whole platform runs on Brasília time. hermes_time.now() (the clock behind cron
+# schedules + delivery) reads this; HERMES_TIMEZONE env takes precedence. The control
+# plane also injects both per tenant, so a reload keeps them in sync.
+timezone: "America/Sao_Paulo"
+
 # Cron deliveries go to the user clean — no "Cronjob Response / job_id / stop this
 # job" engineering wrapper.
 cron:

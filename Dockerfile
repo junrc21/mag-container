@@ -16,6 +16,7 @@ COPY --chown=hermes:hermes bootstrap/patch_disable_channel_commands.py /opt/herm
 COPY --chown=hermes:hermes bootstrap/patch_usage_tokens.py /opt/hermes/bootstrap/patch_usage_tokens.py
 COPY --chown=hermes:hermes bootstrap/patch_toolsets_used.py /opt/hermes/bootstrap/patch_toolsets_used.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
+COPY --chown=hermes:hermes bootstrap/patch_cron_job_runs.py /opt/hermes/bootstrap/patch_cron_job_runs.py
 COPY --chown=hermes:hermes entrypoint.sh /opt/hermes/entrypoint.sh
 
 # MAG Google Workspace MCP server (stdio, zero-dependency Node). The MAG control
@@ -63,6 +64,11 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_toolsets_used.py
 # the tenant is out of credits, with a humane message. See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_hardcap.py
 
+# Cron run history: report EVERY cron run (success/failure/delivery error) to the
+# control plane (POST /internal/runtime/<slug>/job-runs → mag_job_runs), so the
+# client panel can show per-routine run history. Best-effort, never breaks cron.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_cron_job_runs.py
+
 # Web search backend: ddgs (DuckDuckGo) — keyless, headless (no Chrome). The
 # config pins web.backend=ddgs so the agent gets REAL results instead of trying
 # the browser tool (no Chrome in this image) or an unconfigured paid provider.
@@ -92,9 +98,18 @@ COPY --chown=hermes:hermes bootstrap/patch_whatsapp_gateway.py /opt/hermes/boots
 RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/python3 qrcode
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_gateway.py
 
+# Timezone: the whole platform runs on Brasília time. HERMES_TIMEZONE is read by
+# hermes_time.now() (the clock behind cron schedules + delivery), TZ covers OS-level
+# time. tzdata in the venv guarantees ZoneInfo("America/Sao_Paulo") resolves even if
+# the base OS ships no zoneinfo. The per-tenant generated config/.env also set these
+# (control plane), so a reload keeps them; this is the image-level default.
+RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/python3 tzdata
+
 RUN chmod +x /opt/hermes/entrypoint.sh
 
 USER hermes
+ENV TZ=America/Sao_Paulo
+ENV HERMES_TIMEZONE=America/Sao_Paulo
 ENV HOME=/opt/data
 ENV XDG_DATA_HOME=/opt/data/.local/share
 ENV XDG_CONFIG_HOME=/opt/data/.config
