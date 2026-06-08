@@ -98,6 +98,14 @@ COPY --chown=hermes:hermes bootstrap/patch_whatsapp_gateway.py /opt/hermes/boots
 RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/python3 qrcode
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_gateway.py
 
+# Telegram pairing approval over HTTP: lets the web approve the pairing code Hermes DMs
+# an un-allowlisted user (delegates to Hermes' own PairingStore). 3 thin gateway routes
+# (/api/telegram/pairing[/approve|/revoke]). Runs AFTER the WhatsApp gateway patch — it
+# anchors on the WhatsApp routes that patch inserts. See script headers.
+COPY --chown=hermes:hermes bootstrap/mag_telegram_pairing.py /opt/hermes/gateway/platforms/mag_telegram_pairing.py
+COPY --chown=hermes:hermes bootstrap/patch_telegram_gateway.py /opt/hermes/bootstrap/patch_telegram_gateway.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_telegram_gateway.py
+
 # Browser automation (Diretora tier): bake a system Chromium so agent-browser's
 # local backend has a Chrome to drive. agent-browser auto-detects /usr/bin/chromium
 # (verified: open + snapshot work). It lives in the image — NOT under /opt/data (the
