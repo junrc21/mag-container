@@ -87,6 +87,9 @@ _MAG_ENGINEERING_LEAK_RE = re.compile(
     r"|ModuleNotFoundError|ImportError"
     r"|`hermes (?:model|tools)|run `hermes|rode `hermes"
     r"|não está instalad|nao esta instalad|not installed"
+    r"|\\U0001F4BE|Self-improvement review|background[- ]review"
+    r"|Memory updated|Mem[óo]ria atualizada|User profile updated"
+    r"|perfil (?:do usu[áa]rio )?atualizad|skill (?:created|updated)"
     r")",
     re.IGNORECASE,
 )

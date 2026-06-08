@@ -11,6 +11,7 @@ COPY --chown=hermes:hermes bootstrap/config.yaml /opt/hermes/bootstrap/config.ya
 COPY --chown=hermes:hermes bootstrap/soul.md /opt/hermes/bootstrap/soul.md
 COPY --chown=hermes:hermes bootstrap/patch_byterover_plugin.py /opt/hermes/bootstrap/patch_byterover_plugin.py
 COPY --chown=hermes:hermes bootstrap/patch_gateway_output.py /opt/hermes/bootstrap/patch_gateway_output.py
+COPY --chown=hermes:hermes bootstrap/patch_no_review_delivery.py /opt/hermes/bootstrap/patch_no_review_delivery.py
 COPY --chown=hermes:hermes bootstrap/patch_approval_async.py /opt/hermes/bootstrap/patch_approval_async.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_commands.py /opt/hermes/bootstrap/patch_disable_channel_commands.py
 COPY --chown=hermes:hermes bootstrap/patch_usage_tokens.py /opt/hermes/bootstrap/patch_usage_tokens.py
@@ -42,6 +43,11 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_byterover_plugin.p
 # Anti-noise: extend the gateway's Telegram-only status/error sanitization to
 # every end-user channel + humanize provider-error copy (see the script header).
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_gateway_output.py
+
+# Never leak the background "self-improvement review" summary (e.g. "💾 Self-improvement
+# review: User profile updated") to client channels — it bypasses the sanitizer via a
+# direct status-adapter send. This wires that delivery callback to None. See script header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_no_review_delivery.py
 
 # Async support-approval routing: dangerous commands are queued to the MAG admin
 # panel instead of prompting the user (approvals.mode: async). See script header.
