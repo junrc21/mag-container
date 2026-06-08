@@ -98,6 +98,14 @@ COPY --chown=hermes:hermes bootstrap/patch_whatsapp_gateway.py /opt/hermes/boots
 RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/python3 qrcode
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_gateway.py
 
+# Browser automation (Diretora tier): bake a system Chromium so agent-browser's
+# local backend has a Chrome to drive. agent-browser auto-detects /usr/bin/chromium
+# (verified: open + snapshot work). It lives in the image — NOT under /opt/data (the
+# per-tenant volume) — so it's found at runtime regardless of HOME. The `browser`
+# toolset is gated per plan (enabled only for enterprise/Diretora).
+RUN apt-get update && apt-get install -y --no-install-recommends chromium \
+    && rm -rf /var/lib/apt/lists/*
+
 # Timezone: the whole platform runs on Brasília time. HERMES_TIMEZONE is read by
 # hermes_time.now() (the clock behind cron schedules + delivery), TZ covers OS-level
 # time. tzdata in the venv guarantees ZoneInfo("America/Sao_Paulo") resolves even if
