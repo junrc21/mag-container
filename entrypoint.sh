@@ -182,41 +182,46 @@ if [ "${EDGE_TTS_AUTO_INSTALL:-1}" = "1" ]; then
   fi
 fi
 
-# Optional: connect provider on boot (NON-BLOCKING; explicit opt-in only).
-# - Default: OFF (do not auto-connect)
-# - Enable: BRV_CONNECT_ON_BOOT=1
+# Connect ByteRover's LLM provider on boot (NON-BLOCKING; opt-in via BRV_CONNECT_ON_BOOT=1).
 #
-# Connecting providers can be slow or fail on networking; never block Hermes startup.
+# CRITICAL: ByteRover must use the SAME provider Hermes is configured with — NEVER a
+# hardcoded one. We mirror LLM_PROVIDER (set by the control plane from the plan's LLM).
+#  - Key-based providers (gemini/anthropic/openai): explicit `providers connect --api-key`.
+#  - OAuth providers (codex / openai-codex): DO NOTHING here. ByteRover inherits the codex
+#    auth Hermes already holds — there is NO second login, NO second account, NO api key.
+# Hardcoding gemini here (old behavior) silently overrode codex inheritance and pointed
+# memory at a different/depleted LLM.
 if [ "${BRV_CONNECT_ON_BOOT:-0}" = "1" ] && command -v brv >/dev/null 2>&1; then
   (
     cd "${BRV_PROJECT_DIR}" 2>/dev/null || exit 0
 
-    # Prefer GOOGLE_API_KEY; fall back to GEMINI_API_KEY if provided.
-    API_KEY="${GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}"
-    if [ -z "${API_KEY}" ]; then
-      exit 0
-    fi
-
-    # Pin a STABLE Gemini model for ByteRover. brv's default is a preview model
-    # (gemini-3-flash-preview) that hits "high demand" rate limits, causing 4x
-    # retries (~2min each) on every curate/query — which stalls memory writes and
-    # the synchronous prefetch read. gemini-2.5-flash (GA) is fast and reliable.
-    BRV_MODEL="${BRV_MODEL:-gemini-2.5-flash}"
-
-    # Pick a timeout wrapper (longer than before: a 20s cap was killing the
-    # provider connect mid-handshake on fresh tenants, leaving brv with NO
-    # provider connected — which makes every curate fail).
+    # Longer cap: a short timeout was killing the connect mid-handshake on fresh tenants.
     TO_CONNECT="timeout 75s"
     command -v timeout >/dev/null 2>&1 || TO_CONNECT=""
 
-    # Connect the Google/Gemini provider unless already connected. `providers
-    # list` can hang when the daemon is still starting, so it is NOT used as a
-    # gate — connect is effectively idempotent.
-    ${TO_CONNECT} brv providers connect google --api-key "${API_KEY}" --model "${BRV_MODEL}" >/dev/null 2>&1 || true
+    PROV="$(printf '%s' "${LLM_PROVIDER:-}" | tr 'A-Z' 'a-z')"
+    case "${PROV}" in
+      gemini|google)
+        # gemini-2.5-flash (GA): brv's default preview model rate-limits badly.
+        API_KEY="${GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}"
+        [ -n "${API_KEY}" ] && ${TO_CONNECT} brv providers connect google \
+          --api-key "${API_KEY}" --model "${BRV_MODEL:-gemini-2.5-flash}" >/dev/null 2>&1 || true
+        ;;
+      anthropic)
+        [ -n "${ANTHROPIC_API_KEY:-}" ] && ${TO_CONNECT} brv providers connect anthropic \
+          --api-key "${ANTHROPIC_API_KEY}" ${LLM_MODEL:+--model "${LLM_MODEL}"} >/dev/null 2>&1 || true
+        ;;
+      openai)
+        [ -n "${OPENAI_API_KEY:-}" ] && ${TO_CONNECT} brv providers connect openai \
+          --api-key "${OPENAI_API_KEY}" ${LLM_MODEL:+--model "${LLM_MODEL}"} >/dev/null 2>&1 || true
+        ;;
+      *)
+        # codex / openai-codex / oauth / unset: do NOT force a provider — inherit Hermes.
+        : ;;
+    esac
 
-    # Curations must AUTO-APPLY. Newer brv ships HITL review ON by default, which
-    # only *stages* curations (brv review approve/reject) instead of writing them
-    # — so memory silently never persists. Disable it for this project.
+    # Curations must AUTO-APPLY. Newer brv ships HITL review ON by default, which only
+    # *stages* curations instead of writing them — so memory silently never persists.
     ${TO_CONNECT} brv review --disable >/dev/null 2>&1 || true
   ) >/dev/null 2>&1 &
 fi
