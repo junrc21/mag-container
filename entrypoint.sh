@@ -199,26 +199,15 @@ if [ "${BRV_CONNECT_ON_BOOT:-0}" = "1" ] && command -v brv >/dev/null 2>&1; then
     TO_CONNECT="timeout 75s"
     command -v timeout >/dev/null 2>&1 || TO_CONNECT=""
 
-    PROV="$(printf '%s' "${LLM_PROVIDER:-}" | tr 'A-Z' 'a-z')"
-    case "${PROV}" in
-      gemini|google)
-        # gemini-2.5-flash (GA): brv's default preview model rate-limits badly.
-        API_KEY="${GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}"
-        [ -n "${API_KEY}" ] && ${TO_CONNECT} brv providers connect google \
-          --api-key "${API_KEY}" --model "${BRV_MODEL:-gemini-2.5-flash}" >/dev/null 2>&1 || true
-        ;;
-      anthropic)
-        [ -n "${ANTHROPIC_API_KEY:-}" ] && ${TO_CONNECT} brv providers connect anthropic \
-          --api-key "${ANTHROPIC_API_KEY}" ${LLM_MODEL:+--model "${LLM_MODEL}"} >/dev/null 2>&1 || true
-        ;;
-      openai)
-        [ -n "${OPENAI_API_KEY:-}" ] && ${TO_CONNECT} brv providers connect openai \
-          --api-key "${OPENAI_API_KEY}" ${LLM_MODEL:+--model "${LLM_MODEL}"} >/dev/null 2>&1 || true
-        ;;
-      *)
-        # codex / openai-codex / oauth / unset: do NOT force a provider — inherit Hermes.
-        : ;;
-    esac
+    # Connect ByteRover to the memory provider the control plane resolved from the PLAN's LLM:
+    #   BRV_PROVIDER = brv provider name (google/anthropic/openai/xai/…)
+    #   BRV_API_KEY  = the plan's API key (decrypted server-side; never hardcoded)
+    # Both come from the admin panel via the provisioner. Empty for OAuth plans (codex), whose
+    # brv login is browser-only — those need an API-key LLM on the plan, or a 1x manual brv login.
+    if [ -n "${BRV_PROVIDER:-}" ] && [ -n "${BRV_API_KEY:-}" ]; then
+      ${TO_CONNECT} brv providers connect "${BRV_PROVIDER}" \
+        --api-key "${BRV_API_KEY}" ${LLM_MODEL:+--model "${LLM_MODEL}"} >/dev/null 2>&1 || true
+    fi
 
     # Curations must AUTO-APPLY. Newer brv ships HITL review ON by default, which only
     # *stages* curations instead of writing them — so memory silently never persists.
