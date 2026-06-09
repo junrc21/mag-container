@@ -14,6 +14,7 @@ COPY --chown=hermes:hermes bootstrap/patch_gateway_output.py /opt/hermes/bootstr
 COPY --chown=hermes:hermes bootstrap/patch_no_review_delivery.py /opt/hermes/bootstrap/patch_no_review_delivery.py
 COPY --chown=hermes:hermes bootstrap/patch_gateway_system_copy.py /opt/hermes/bootstrap/patch_gateway_system_copy.py
 COPY --chown=hermes:hermes bootstrap/patch_approval_async.py /opt/hermes/bootstrap/patch_approval_async.py
+COPY --chown=hermes:hermes bootstrap/patch_channel_noise_suppress.py /opt/hermes/bootstrap/patch_channel_noise_suppress.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_commands.py /opt/hermes/bootstrap/patch_disable_channel_commands.py
 COPY --chown=hermes:hermes bootstrap/patch_usage_tokens.py /opt/hermes/bootstrap/patch_usage_tokens.py
 COPY --chown=hermes:hermes bootstrap/patch_toolsets_used.py /opt/hermes/bootstrap/patch_toolsets_used.py
@@ -57,6 +58,10 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_gateway_system_cop
 # Async support-approval routing: dangerous commands are queued to the MAG admin
 # panel instead of prompting the user (approvals.mode: async). See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_approval_async.py
+
+# Kill 3 client-channel leaks found in MAG E2E (§17/§18): execute_code approval prompt,
+# /busy "Interrupting current task" notice, and the /busy first-time tip. See script header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_channel_noise_suppress.py
 
 # Disable gateway slash commands on client channels (Telegram/WhatsApp/etc.) so end
 # users can't change the LLM model, restart/reset/yolo, etc. — only /start survives,
