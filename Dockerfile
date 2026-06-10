@@ -21,6 +21,7 @@ COPY --chown=hermes:hermes bootstrap/patch_toolsets_used.py /opt/hermes/bootstra
 COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
 COPY --chown=hermes:hermes bootstrap/patch_cron_job_runs.py /opt/hermes/bootstrap/patch_cron_job_runs.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_code_exec.py /opt/hermes/bootstrap/patch_disable_channel_code_exec.py
+COPY --chown=hermes:hermes bootstrap/patch_suppress_reset_banner.py /opt/hermes/bootstrap/patch_suppress_reset_banner.py
 COPY --chown=hermes:hermes entrypoint.sh /opt/hermes/entrypoint.sh
 
 # MAG Google Workspace MCP server (stdio, zero-dependency Node). The MAG control
@@ -90,6 +91,11 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_cron_job_runs.py
 # deny at approval) so the model never loops calling execute_code -> deny -> retry
 # (~60s+ stall before refusing). Internal surfaces keep it. See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_disable_channel_code_exec.py
+
+# Suppress the auto-reset banner on client channels — it leaks the AI model/provider,
+# config.yaml internals and slash commands in English. The agent still gets the
+# internal context_note; the user just continues in a fresh session. See script header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_suppress_reset_banner.py
 
 # Web search backend: ddgs (DuckDuckGo) — keyless, headless (no Chrome). The
 # config pins web.backend=ddgs so the agent gets REAL results instead of trying
