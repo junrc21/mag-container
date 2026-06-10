@@ -20,6 +20,7 @@ COPY --chown=hermes:hermes bootstrap/patch_usage_tokens.py /opt/hermes/bootstrap
 COPY --chown=hermes:hermes bootstrap/patch_toolsets_used.py /opt/hermes/bootstrap/patch_toolsets_used.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
 COPY --chown=hermes:hermes bootstrap/patch_cron_job_runs.py /opt/hermes/bootstrap/patch_cron_job_runs.py
+COPY --chown=hermes:hermes bootstrap/patch_disable_channel_code_exec.py /opt/hermes/bootstrap/patch_disable_channel_code_exec.py
 COPY --chown=hermes:hermes entrypoint.sh /opt/hermes/entrypoint.sh
 
 # MAG Google Workspace MCP server (stdio, zero-dependency Node). The MAG control
@@ -84,6 +85,11 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_hardcap.py
 # control plane (POST /internal/runtime/<slug>/job-runs → mag_job_runs), so the
 # client panel can show per-routine run history. Best-effort, never breaks cron.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_cron_job_runs.py
+
+# Task A: on client channels, remove the code_execution toolset entirely (not just
+# deny at approval) so the model never loops calling execute_code -> deny -> retry
+# (~60s+ stall before refusing). Internal surfaces keep it. See script header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_disable_channel_code_exec.py
 
 # Web search backend: ddgs (DuckDuckGo) — keyless, headless (no Chrome). The
 # config pins web.backend=ddgs so the agent gets REAL results instead of trying
