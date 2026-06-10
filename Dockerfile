@@ -34,6 +34,10 @@ COPY --chown=hermes:hermes mcp/google/server.mjs /opt/mag/google-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/linear/server.mjs /opt/mag/linear-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/clickup/server.mjs /opt/mag/clickup-mcp/server.mjs
 
+# ByteRover memory OAuth helper — driven by the control plane (admin "Conectar memória").
+# Talks to the per-tenant brv daemon's transport (startOAuth/awaitOAuthCallback). See header.
+COPY --chown=hermes:hermes mcp/brv/oauth-helper.mjs /opt/mag/brv-oauth-helper.mjs
+
 # MAG Document Reader MCP (stdio, Node + pdf/docx/xlsx libs). Extracts text from
 # uploaded documents so the agent can absorb it into ByteRover. Deps are installed
 # at build time (no network needed at runtime).
