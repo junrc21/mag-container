@@ -155,27 +155,33 @@ if [ "${BRV_AUTO_INSTALL:-1}" = "1" ] && [ ! -x "${BRV_CLIENT_BIN}" ]; then
 fi
 
 # Memory must be BEST-EFFORT. brv has no per-call timeout — on a codex plan without a
-# brv API key, or a slow/unreachable ByteRover backend, `brv query` (recall, which runs
-# BEFORE the agent replies) and `brv curate` (the post-turn write) can hang for minutes
-# and stall the whole channel turn. Wrap the launcher so ONLY those two subcommands are
-# time-bounded; the daemon and every other subcommand pass through untouched. When brv
-# is healthy (responds in ~1-2s) the timeout never fires. Idempotent: re-running on an
-# already-wrapped bin is a no-op. Tune the bound with MAG_BRV_TIMEOUT (seconds).
-if [ -e "${BRV_CLIENT_BIN}" ] && ! grep -q "MAG_brv_timeout" "${BRV_CLIENT_BIN}" 2>/dev/null; then
+# brv API key, or a slow/unreachable ByteRover backend, `brv query` (recall, BEFORE the
+# reply) and `brv curate` (the post-turn write) can hang for minutes and stall the turn.
+# Wrap the launcher so ONLY those two subcommands are time-bounded; the daemon and every
+# other subcommand pass through untouched. They get DIFFERENT budgets:
+#   • query  — blocks turn START, so it must be SHORT (default 15s).
+#   • curate — runs in the background (sync_turn) or as an explicit save; the brv backend
+#     does LLM work and legitimately takes ~15-25s, so a 15s cap silently DROPS the write
+#     ("Thinking..." killed mid-curate). It gets a longer budget (default 60s).
+# Tune via MAG_BRV_QUERY_TIMEOUT / MAG_BRV_CURATE_TIMEOUT. Idempotent, and UPGRADES an
+# older single-budget wrapper (the idempotency check keys on MAG_BRV_CURATE_TIMEOUT).
+if [ -e "${BRV_CLIENT_BIN}" ] && ! grep -q "MAG_BRV_CURATE_TIMEOUT" "${BRV_CLIENT_BIN}" 2>/dev/null; then
   BRV_REAL_BIN="${BRV_INSTALL_DIR}/lib/bin/brv"
   if [ -e "${BRV_REAL_BIN}" ]; then
     rm -f "${BRV_CLIENT_BIN}"
     cat > "${BRV_CLIENT_BIN}" <<BRVWRAP
 #!/usr/bin/env bash
-# MAG_brv_timeout: bound query/curate so a hung brv backend never stalls a turn
-# (memory is best-effort). Daemon + other subcommands pass through unchanged.
+# MAG_brv_timeout: bound query/curate so a slow/hung brv backend never stalls a turn
+# (memory is best-effort). query is short (blocks turn start); curate gets longer
+# (background + LLM-backed write, ~15-25s). Daemon + other subcommands pass through.
 case "\$1" in
-  query|curate) exec timeout "\${MAG_BRV_TIMEOUT:-15}" "${BRV_REAL_BIN}" "\$@" ;;
+  query)  exec timeout "\${MAG_BRV_QUERY_TIMEOUT:-15}"  "${BRV_REAL_BIN}" "\$@" ;;
+  curate) exec timeout "\${MAG_BRV_CURATE_TIMEOUT:-60}" "${BRV_REAL_BIN}" "\$@" ;;
   *) exec "${BRV_REAL_BIN}" "\$@" ;;
 esac
 BRVWRAP
     chmod +x "${BRV_CLIENT_BIN}"
-    echo "[entrypoint] brv launcher wrapped with best-effort timeout (query/curate, ${MAG_BRV_TIMEOUT:-15}s)" >&2
+    echo "[entrypoint] brv launcher wrapped (query \${MAG_BRV_QUERY_TIMEOUT:-15}s / curate \${MAG_BRV_CURATE_TIMEOUT:-60}s)" >&2
   fi
 fi
 
