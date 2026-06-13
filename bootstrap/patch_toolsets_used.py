@@ -57,12 +57,33 @@ def _mag_toolsets_used(agent_result):
         return []
 
 
+def _mag_toolset_calls(agent_result):
+    """Every tool call's toolset WITH repeats (3x search -> 3 entries) — the control
+    plane sums these so a multi-tool turn bills ALL calls, not just the priciest."""
+    try:
+        tmap = _mag_tool_to_toolset_map()
+        out = []
+        for _msg in (agent_result.get("messages") or []):
+            if not isinstance(_msg, dict):
+                continue
+            for _tc in (_msg.get("tool_calls") or []):
+                _fn = None
+                if isinstance(_tc, dict):
+                    _fn = (_tc.get("function") or {}).get("name")
+                if _fn and tmap.get(_fn):
+                    out.append(tmap[_fn])
+        return out
+    except Exception:
+        return []
+
+
 '''
 
 OLD_LINE = '                "response": (response or "")[:500],\n'
 NEW_LINE = (
     '                "response": (response or "")[:500],\n'
     '                "toolsets_used": _mag_toolsets_used(agent_result),\n'
+    '                "toolset_calls": _mag_toolset_calls(agent_result),\n'
 )
 
 
