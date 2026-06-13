@@ -37,11 +37,29 @@ mkdir -p \
 # The MAG control plane mounts each tenant's generated files (config.yaml, .env,
 # SOUL.md and hooks/) read-only at /mag/bootstrap. Copy them into the persistent
 # /opt/data volume (HOME) so Hermes and the gateway event hooks pick them up.
-# Directories are merged into existing destinations so the pre-created
-# /opt/data/hooks gets populated; plain files are only seeded when absent, so a
-# tenant's persisted state (e.g. a config.yaml rewritten by a runtime reload) is
-# never clobbered on restart. Safe no-op when /mag/bootstrap is not mounted.
+#
+# Two sync policies:
+#  - DETERMINISTIC files ($MAG_REFRESH_FILES) — config.yaml (LLM provider + MCP),
+#    .env (LLM/channel/key env) and SOUL.md (persona). The control plane FULLY
+#    regenerates these from the plan every provision, so they are ALWAYS re-synced
+#    (overwritten). Without this they froze at first-provision state and plan
+#    changes (LLM/MCP/channels/key rotation/persona) silently never reached existing
+#    tenants. Nothing in the runtime rewrites these exact paths — channel adapters
+#    that persist creds write to ~/.hermes/.env, a DIFFERENT file — so refreshing
+#    them is safe.
+#  - Everything else — auth.json (OAuth token acquired at runtime), sessions, brv
+#    memory: seeded ONLY when absent so runtime-owned state is never clobbered.
+#  - Directories (hooks/) are merged so the pre-created /opt/data/hooks gets the
+#    latest hook code on every boot.
+# Safe no-op when /mag/bootstrap is not mounted.
 MAG_BOOTSTRAP_DIR="/mag/bootstrap"
+MAG_REFRESH_FILES=" config.yaml .env SOUL.md "
+_mag_should_refresh() {
+  case "$MAG_REFRESH_FILES" in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 mkdir -p /opt/data/workspace /opt/data/hooks
 if [ -d "$MAG_BOOTSTRAP_DIR" ]; then
   for item in "$MAG_BOOTSTRAP_DIR"/* "$MAG_BOOTSTRAP_DIR"/.[!.]*; do
@@ -50,7 +68,7 @@ if [ -d "$MAG_BOOTSTRAP_DIR" ]; then
     if [ -d "$item" ]; then
       mkdir -p "/opt/data/$name"
       cp -R "$item"/. "/opt/data/$name"/
-    elif [ ! -e "/opt/data/$name" ]; then
+    elif _mag_should_refresh "$name" || [ ! -e "/opt/data/$name" ]; then
       cp -R "$item" "/opt/data/$name"
     fi
   done
