@@ -144,6 +144,14 @@ COPY --chown=hermes:hermes bootstrap/mag_telegram_pairing.py /opt/hermes/gateway
 COPY --chown=hermes:hermes bootstrap/patch_telegram_gateway.py /opt/hermes/bootstrap/patch_telegram_gateway.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_telegram_gateway.py
 
+# Sanitize cron job error messages sent to client channels (Telegram/WhatsApp/etc.)
+# When a cron job fails (e.g. "No Codex credentials stored"), Hermes sends the raw
+# technical error directly to the channel, violating product secrecy. This patch
+# intercepts those errors and replaces them with a generic user-friendly message.
+# See script header for details.
+COPY --chown=hermes:hermes bootstrap/patch_sanitize_cron_errors.py /opt/hermes/bootstrap/patch_sanitize_cron_errors.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_sanitize_cron_errors.py
+
 # Browser automation (Diretora tier): bake a system Chromium so agent-browser's
 # local backend has a Chrome to drive. agent-browser auto-detects /usr/bin/chromium
 # (verified: open + snapshot work). It lives in the image — NOT under /opt/data (the
