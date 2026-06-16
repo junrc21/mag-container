@@ -23,6 +23,35 @@ function log(...args) {
   process.stderr.write(`[mag-custom-proxy] ${args.join(' ')}\n`);
 }
 
+// Apply authentication based on authType
+function applyAuth(url, headers, apiKey, authType = 'bearer') {
+  switch (authType) {
+    case 'bearer':
+      headers['Authorization'] = `Bearer ${apiKey}`;
+      break;
+    case 'basic':
+      headers['Authorization'] = `Basic ${apiKey}`;
+      break;
+    case 'query_key':
+      // Ghost Content API style: ?key=<apiKey>
+      const separator = url.includes('?') ? '&' : '?';
+      return { url: `${url}${separator}key=${encodeURIComponent(apiKey)}`, headers };
+    case 'none':
+      // No auth header
+      break;
+    default:
+      // If authType starts with 'header_', use custom header name
+      if (authType.startsWith('header_')) {
+        const headerName = authType.slice(7); // Remove 'header_' prefix
+        headers[headerName] = apiKey;
+      } else {
+        // Fallback to bearer
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      }
+  }
+  return { url, headers };
+}
+
 function send(msg) {
   process.stdout.write(JSON.stringify(msg) + '\n');
 }
@@ -50,12 +79,16 @@ function substitutePath(path, args) {
 
 // Make HTTP request based on tool definition
 async function makeHttpRequest(toolDef, args) {
-  const url = `${config.baseUrl.replace(/\/$/, '')}${substitutePath(toolDef.path, args)}`;
+  let url = `${config.baseUrl.replace(/\/$/, '')}${substitutePath(toolDef.path, args)}`;
   const headers = {
-    'Authorization': `Bearer ${config.apiKey}`,
     'Content-Type': 'application/json',
     ...(toolDef.headers || {}),
   };
+
+  // Apply authentication based on config authType
+  const authResult = applyAuth(url, headers, config.apiKey, config.authType);
+  url = authResult.url;
+  Object.assign(headers, authResult.headers);
 
   const body = toolDef.method !== 'GET' && toolDef.method !== 'DELETE' ? { body: args.body || {} } : {};
 
@@ -112,8 +145,11 @@ function initConfig() {
     throw new Error(`Invalid CUSTOM_CONNECTOR_CONFIG JSON: ${e.message}`);
   }
 
-  if (!config.baseUrl || !config.apiKey) {
-    throw new Error('CUSTOM_CONNECTOR_CONFIG must include baseUrl and apiKey');
+  if (!config.baseUrl) {
+    throw new Error('CUSTOM_CONNECTOR_CONFIG must include baseUrl');
+  }
+  if (config.authType !== 'none' && !config.apiKey) {
+    throw new Error('CUSTOM_CONNECTOR_CONFIG must include apiKey when authType is not "none"');
   }
 
   // Build tools from config
@@ -192,12 +228,16 @@ function initConfig() {
           required: ['method', 'path'],
         },
         async run(args) {
-          const url = `${config.baseUrl.replace(/\/$/, '')}${args.path}`;
+          let url = `${config.baseUrl.replace(/\/$/, '')}${args.path}`;
           const headers = {
-            'Authorization': `Bearer ${config.apiKey}`,
             'Content-Type': 'application/json',
             ...(args.headers || {}),
           };
+
+          // Apply authentication based on config authType
+          const authResult = applyAuth(url, headers, config.apiKey, config.authType);
+          url = authResult.url;
+          Object.assign(headers, authResult.headers);
 
           log(`Calling ${args.method} ${url}`);
 
