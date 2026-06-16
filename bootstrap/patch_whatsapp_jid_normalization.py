@@ -43,9 +43,10 @@ def apply(text: str, old: str, new: str, label: str) -> str:
 
 
 # --- Edit 1: Add normalizeWhatsAppJid function (after imports) -------------------
-OLD_IMPORTS = "const qrcode = require('qrcode');\n"
+# The bridge.js uses ES6 imports, so we anchor after the qrcode-terminal import
+OLD_IMPORTS = "import qrcode from 'qrcode-terminal';\n"
 NEW_IMPORTS = (
-    "const qrcode = require('qrcode');\n"
+    "import qrcode from 'qrcode-terminal';\n"
     "\n"
     "// _mag_whatsapp_jid_normalize: Normalize WhatsApp JIDs to prevent jidDecode failures.\n"
     "// Groups need @g.us suffix, DMs need @s.whatsapp.net or @lid. Auto-detect by length.\n"
