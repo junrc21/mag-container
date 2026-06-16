@@ -34,6 +34,12 @@ COPY --chown=hermes:hermes mcp/google/server.mjs /opt/mag/google-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/linear/server.mjs /opt/mag/linear-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/clickup/server.mjs /opt/mag/clickup-mcp/server.mjs
 
+# MAG Custom Proxy MCP server (stdio, zero-dependency Node). Reads CUSTOM_CONNECTOR_CONFIG
+# env var (JSON with baseUrl + apiKey) and exposes a generic http_request tool for
+# calling arbitrary HTTP APIs. Enables users to connect any REST API as a knowledge source.
+RUN mkdir -p /opt/mag/custom-proxy-mcp && chown -R hermes:hermes /opt/mag
+COPY --chown=hermes:hermes mcp/custom-proxy/server.mjs /opt/mag/custom-proxy-mcp/server.mjs
+
 # ByteRover memory OAuth helper — driven by the control plane (admin "Conectar memória").
 # Talks to the per-tenant brv daemon's transport (startOAuth/awaitOAuthCallback). See header.
 COPY --chown=hermes:hermes mcp/brv/oauth-helper.mjs /opt/mag/brv-oauth-helper.mjs
