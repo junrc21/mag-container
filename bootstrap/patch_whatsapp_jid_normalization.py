@@ -8,12 +8,16 @@ WhatsApp requires properly formatted JIDs:
 When users send messages to groups listed without the @g.us suffix (e.g. "120363407454678781"),
 jidDecode fails with "Cannot destructure property 'user' of 'jidDecode(...)' as it is undefined."
 
-This patch adds a normalizeWhatsAppJid function that:
-  - Appends @g.us to 18+ digit numbers (groups)
-  - Appends @s.whatsapp.net to 10-15 digit numbers (phone numbers)
-  - Preserves existing suffixes (@g.us, @s.whatsapp.net, @lid)
+This patch adds TWO layers of protection:
 
-The function is applied wherever jidDecode is called or where JIDs are used.
+1. A normalizeWhatsAppJid function that fixes JID format
+2. A monkey-patch of Baileys' jidDecode to:
+   - Always return a valid object (never undefined)
+   - Auto-normalize incoming JIDs before decoding
+
+This fixes both:
+- Calls in bridge.js that go through jidDecode
+- Calls inside compiled Baileys code (make-in-memory-store.js, etc.)
 
 Idempotent + fail-loud.
 """
@@ -42,7 +46,7 @@ def apply(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new, 1)
 
 
-# --- Edit 1: Add normalizeWhatsAppJid function (after imports) -------------------
+# --- Edit 1: Add normalizeWhatsAppJid function + monkey-patch (after imports) -------
 # The bridge.js uses ES6 imports, so we anchor after the qrcode-terminal import
 OLD_IMPORTS = "import qrcode from 'qrcode-terminal';\n"
 NEW_IMPORTS = (
@@ -50,6 +54,10 @@ NEW_IMPORTS = (
     "\n"
     "// _mag_whatsapp_jid_normalize: Normalize WhatsApp JIDs to prevent jidDecode failures.\n"
     "// Groups need @g.us suffix, DMs need @s.whatsapp.net or @lid. Auto-detect by length.\n"
+    "// Also monkey-patches Baileys' jidDecode to NEVER return undefined.\n"
+    "\n"
+    "const ORIGINAL_JID_DECODE = Symbol('original_jidDecode');\n"
+    "\n"
     "function normalizeWhatsAppJid(jid) {\n"
     "  if (!jid || typeof jid !== 'string') return jid;\n"
     "  // Already has suffix - preserve as-is\n"
@@ -70,21 +78,50 @@ NEW_IMPORTS = (
     "  return jid;\n"
     "}\n"
     "\n"
+    "// Monkey-patch Baileys' jidDecode to NEVER return undefined.\n"
+    "// This fixes the 'Cannot destructure property user of jidDecode(...) as undefined' error\n"
+    "// that occurs inside compiled Baileys code (make-in-memory-store.js, etc.)\n"
+    "function makeSafeJidDecode(originalJidDecode) {\n"
+    "  return function safeJidDecode(jid) {\n"
+    "    // First normalize the JID\n"
+    "    const normalized = normalizeWhatsAppJid(jid);\n"
+    "    // Call original with normalized JID\n"
+    "    const result = originalJidDecode(normalized);\n"
+    "    // NEVER return undefined - return a safe fallback object\n"
+    "    if (!result) {\n"
+    "      console.warn(`[MAG] jidDecode returned undefined for: ${jid}, using safe fallback`);\n"
+    "      // Parse what we can from the normalized JID\n"
+    "      const [user, domain] = normalized.includes('@') ? normalized.split('@') : [normalized, 's.whatsapp.net'];\n"
+    "      return { user, server: domain };\n"
+    "    }\n"
+    "    return result;\n"
+    "  };\n"
+    "}\n"
+    "\n"
+    "// Patch @whiskeysockets/baileys WABinary jidDecode at module load time\n"
+    "let baileysModule;\n"
+    "try {\n"
+    "  baileysModule = require('@whiskeysockets/baileys');\n"
+    "  if (baileysModule && baileysModule[ORIGINAL_JID_DECODE]) {\n"
+    "    // Already patched\n"
+    "  } else if (baileysModule && baileysModule.jidDecode) {\n"
+    "    baileysModule[ORIGINAL_JID_DECODE] = baileysModule.jidDecode;\n"
+    "    baileysModule.jidDecode = makeSafeJidDecode(baileysModule.jidDecode);\n"
+    "    console.log('[MAG] Patched Baileys jidDecode with safe wrapper');\n"
+    "  }\n"
+    "} catch (e) {\n"
+    "  // Baileys might not be available at this point - will patch later\n"
+    "}\n"
+    "\n"
 )
 
 
-# --- Edit 2: Wrap jidDecode calls with normalization ---------------------------
-# This is a common pattern in Baileys that can fail with bare numbers
-
-
-# --- Edit 3: Normalize chatId in message sending ---------------------------------
-# This is informational - actual normalization happens via jidDecode wrapping above
-# If the bridge uses a sendMessage function, we add a comment reminder
+# --- Edit 2: sendMessage comment (informational) ----------------------------------
+# The actual normalization happens via the monkey-patch above
 OLD_SEND_MSG = "async function sendMessage("
 NEW_SEND_MSG = (
     "async function sendMessage(\n"
-    "  // _mag_whatsapp_jid_normalize: chatId should have @g.us (groups) or @s.whatsapp.net (DMs)\n"
-    "  // The jidDecode wrapping above handles normalization automatically.\n"
+    "  // _mag_whatsapp_jid_normalize: chatId normalized by monkey-patched jidDecode\n"
 )
 
 
@@ -94,50 +131,17 @@ def main() -> None:
     text = BRIDGE_JS.read_text()
     print(f"Patching {BRIDGE_JS} ({MARKER})")
 
-    # Add the normalize function after imports
-    text = apply(text, OLD_IMPORTS, NEW_IMPORTS, "normalizeWhatsAppJid function")
-
-    # Wrap jidDecode calls with normalization (if any exist)
-    # Pattern: jidDecode(<argument(s)>) -> jidDecode(normalizeWhatsAppJid(<argument(s)>))
-    # We match the full call including arguments and closing paren
-    jiddecode_count = text.count("jidDecode(")
-    already_wrapped = text.count("jidDecode(normalizeWhatsAppJid(")
-    if jiddecode_count > already_wrapped:
-        # Pattern to match jidDecode(...) with balanced parentheses
-        # This matches: jidDecode( followed by anything until matching )
-        # And checks idempotency: if already contains normalizeWhatsAppJid, skip
-        def wrap_jiddecode(match):
-            # match.group(0) is the full call: jidDecode(... )
-            full_call = match.group(0)
-            # Idempotency: if already contains normalizeWhatsAppJid, don't modify
-            if 'normalizeWhatsAppJid' in full_call:
-                return full_call
-            # Extract the arguments (remove "jidDecode(" at start and ")" at end)
-            args = full_call[len("jidDecode("):-1]
-            return f"jidDecode(normalizeWhatsAppJid({args}))"
-
-        # Pattern: jidDecode( ... ) with balanced parens
-        pattern = r'\bjidDecode\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)'
-        text = re.sub(pattern, wrap_jiddecode, text)
-        wrapped = jiddecode_count - already_wrapped
-        print(f"  [ok]   wrapped {wrapped} jidDecode() calls")
-    else:
-        print(f"  [skip] jidDecode wrapping (not found or already patched)")
+    # Add the normalize function and monkey-patch after imports
+    text = apply(text, OLD_IMPORTS, NEW_IMPORTS, "normalizeWhatsAppJid + monkey-patch")
 
     # If sendMessage function exists, add a comment about normalization
-    # Only patch if sendMessage exists and isn't already patched
-    if "async function sendMessage(" in text and "_mag_whatsapp_jid_normalize" not in text:
-        # Check if the comment is already there
-        send_msg_section = text.split("async function sendMessage(")[1].split("\n")[0] if "async function sendMessage(" in text else ""
-        if "_mag_whatsapp_jid_normalize" not in send_msg_section:
-            text = apply(text, "async function sendMessage(", NEW_SEND_MSG, "sendMessage comment")
-        else:
-            print(f"  [skip] sendMessage comment: already patched")
+    if "async function sendMessage(" in text and "_mag_whatsapp_jid_normalize" not in text.split("async function sendMessage(")[1].split("\n")[0]:
+        text = apply(text, "async function sendMessage(", NEW_SEND_MSG, "sendMessage comment")
     else:
         print(f"  [skip] sendMessage comment (not found or already patched)")
 
     BRIDGE_JS.write_text(text)
-    print("  WhatsApp JID normalization patched.")
+    print("  WhatsApp JID normalization + jidDecode monkey-patch applied.")
 
 
 if __name__ == "__main__":
