@@ -119,7 +119,10 @@ def _mag_load_forbidden_policies():
 def _mag_sender_allowed_for_policy(source, policy) -> bool:
     try:
         from gateway.session_context import get_session_env
-        platform_name = source.platform.value if source and getattr(source, "platform", None) else ""
+        platform_name = (
+            get_session_env("HERMES_SESSION_PLATFORM", "")
+            or (source.platform.value if source and getattr(source, "platform", None) else "")
+        )
         if platform_name == "telegram":
             sender = (
                 get_session_env("HERMES_SESSION_USER_ID", "")
@@ -141,8 +144,13 @@ def _mag_sender_allowed_for_policy(source, policy) -> bool:
 
 def _mag_forbidden_topic_block_message(source, event):
     try:
-        platform_name = source.platform.value if source and getattr(source, "platform", None) else ""
-        if platform_name in ("api_server", "local", "cli"):
+        from gateway.session_context import get_session_env
+
+        platform_name = (
+            get_session_env("HERMES_SESSION_PLATFORM", "")
+            or (source.platform.value if source and getattr(source, "platform", None) else "")
+        )
+        if platform_name in ("local", "cli", ""):
             return None
         text = str(getattr(event, "text", "") or "").strip()
         if not text:
