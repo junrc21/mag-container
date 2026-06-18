@@ -135,6 +135,12 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_web_extract_free.p
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_bridge.py /opt/hermes/bootstrap/patch_whatsapp_bridge.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_bridge.py
 
+# WhatsApp bridge boot fix: don't force npm install on every boot when a usable
+# node_modules tree already exists but predates the dependency stamp. Backfill
+# the stamp automatically and tolerate npm failures when deps are already usable.
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_boot_deps.py /opt/hermes/bootstrap/patch_whatsapp_boot_deps.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_boot_deps.py
+
 # WhatsApp JID normalization: ensure groups use @g.us and DMs use @s.whatsapp.net suffix.
 # Prevents jidDecode failures when users send messages to targets listed without suffix.
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_jid_normalization.py /opt/hermes/bootstrap/patch_whatsapp_jid_normalization.py
@@ -197,3 +203,4 @@ ENV BRV_INSTALL_DIR=/opt/data/.local/share/brv-cli
 ENV PATH=/opt/data/.local/share/brv-cli/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 ENTRYPOINT ["/opt/hermes/entrypoint.sh"]
+
