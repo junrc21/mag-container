@@ -25,10 +25,11 @@ COPY --chown=hermes:hermes bootstrap/patch_disable_channel_code_exec.py /opt/her
 COPY --chown=hermes:hermes bootstrap/patch_suppress_reset_banner.py /opt/hermes/bootstrap/patch_suppress_reset_banner.py
 COPY --chown=hermes:hermes entrypoint.sh /opt/hermes/entrypoint.sh
 
-# MAG Google Workspace MCP server (stdio, zero-dependency Node). The MAG control
-# plane wires it per-tenant via mcp_servers.google in the generated config.yaml.
-RUN mkdir -p /opt/mag/google-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp && chown -R hermes:hermes /opt/mag
+# MAG Google Workspace + OneDrive MCP servers (stdio, zero-dependency Node). The
+# MAG control plane wires them per-tenant via generated mcp_servers entries.
+RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp && chown -R hermes:hermes /opt/mag
 COPY --chown=hermes:hermes mcp/google/server.mjs /opt/mag/google-mcp/server.mjs
+COPY --chown=hermes:hermes mcp/onedrive/server.mjs /opt/mag/onedrive-mcp/server.mjs
 
 # MAG Linear + ClickUp MCP servers (stdio, zero-dependency Node). Use the connector
 # token the user authorized in Fontes (fetched per-call from the MAG control plane).
