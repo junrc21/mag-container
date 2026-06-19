@@ -1,4 +1,10 @@
-ARG BASE_IMAGE=nousresearch/hermes-agent:main
+# Hermes base PINADO no DIGEST que a última imagem de prod usou (build verde de 2026-06-18,
+# run CI 27793975658). NÃO usar `:main` (tag móvel): ela já avançou e o refactor do cron
+# scheduler upstream quebra patch_cron_job_runs/patch_sanitize_cron_errors; e tags antigas
+# (v2026.6.5) são velhas demais p/ patch_whatsapp_boot_deps. Este digest é o único ponto
+# onde TODOS os patches (equipe + MAG) aplicam — é exatamente o Hermes que o runtime de prod
+# já roda (zero mudança de comportamento). Bump de Hermes = trocar o digest + revalidar patches.
+ARG BASE_IMAGE=nousresearch/hermes-agent@sha256:20c40d8c948254e1167827289b09300a476bae2eddc23a9d4a24bfde4567408e
 FROM ${BASE_IMAGE}
 
 # We keep runtime as user "hermes" (no root at runtime).
@@ -175,6 +181,14 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_telegram_gateway.p
 # See script header for details.
 COPY --chown=hermes:hermes bootstrap/patch_sanitize_cron_errors.py /opt/hermes/bootstrap/patch_sanitize_cron_errors.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_sanitize_cron_errors.py
+
+# Telegram block list: make the deny path authoritative in Hermes core. A blocked user
+# is denied even if present in TELEGRAM_ALLOWED_USERS, and is never re-issued a pairing
+# code (so denied users don't reappear in the panel's pending list). Block-list storage
+# lives in mag_telegram_pairing.py (copied above); this patch injects two checks that
+# consult it (_is_user_authorized + the unauthorized-DM handler). See script header.
+COPY --chown=hermes:hermes bootstrap/patch_authz_blocklist.py /opt/hermes/bootstrap/patch_authz_blocklist.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_authz_blocklist.py
 
 # Browser automation (Diretora tier): bake a system Chromium so agent-browser's
 # local backend has a Chrome to drive. agent-browser auto-detects /usr/bin/chromium
