@@ -144,6 +144,14 @@ COPY --chown=hermes:hermes bootstrap/mag_telegram_pairing.py /opt/hermes/gateway
 COPY --chown=hermes:hermes bootstrap/patch_telegram_gateway.py /opt/hermes/bootstrap/patch_telegram_gateway.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_telegram_gateway.py
 
+# Telegram block list: make the deny path authoritative in Hermes core. A blocked user
+# is denied even if present in TELEGRAM_ALLOWED_USERS, and is never re-issued a pairing
+# code (so denied users don't reappear in the panel's pending list). Block-list storage
+# lives in mag_telegram_pairing.py (copied above); this patch injects two checks that
+# consult it (_is_user_authorized + the unauthorized-DM handler). See script header.
+COPY --chown=hermes:hermes bootstrap/patch_authz_blocklist.py /opt/hermes/bootstrap/patch_authz_blocklist.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_authz_blocklist.py
+
 # Browser automation (Diretora tier): bake a system Chromium so agent-browser's
 # local backend has a Chrome to drive. agent-browser auto-detects /usr/bin/chromium
 # (verified: open + snapshot work). It lives in the image — NOT under /opt/data (the

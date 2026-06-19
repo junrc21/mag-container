@@ -1,12 +1,15 @@
-"""Build-time patch: expose Telegram pairing-approval routes on the gateway API (MAG).
+"""Build-time patch: expose Telegram access-control routes on the gateway API (MAG).
 
-Adds 3 thin routes to the gateway's API server so the MAG control plane can approve
-Telegram pairing codes from the web (no SSH/CLI):
+Adds thin routes to the gateway's API server so the MAG control plane can drive the
+full Telegram access surface from the web (no SSH/CLI):
     GET  /api/telegram/pairing
-    POST /api/telegram/pairing/approve
+    POST /api/telegram/pairing/approve        (by pairing code)
+    POST /api/telegram/pairing/approve_user   (by known user id — no code)
     POST /api/telegram/pairing/revoke
+    POST /api/telegram/pairing/block          (deny → block list)
+    POST /api/telegram/pairing/unblock
 All the logic lives in the self-contained module mag_telegram_pairing.py (copied to
-gateway/platforms/); the api_server only gets 3 one-line wrapper methods that delegate
+gateway/platforms/); the api_server only gets one-line wrapper methods that delegate
 there — so we DON'T touch any existing api_server behavior (low risk).
 
 Anchors on the WhatsApp pairing lines that patch_whatsapp_gateway.py already inserted
@@ -39,17 +42,20 @@ def apply(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new, 1)
 
 
-# --- Edit 1: register the 3 routes (after the WhatsApp logout route) -----------
+# --- Edit 1: register the routes (after the WhatsApp logout route) -------------
 OLD_ROUTES = '            self._app.router.add_post("/api/whatsapp/logout", self._mag_wa_logout)\n'
 NEW_ROUTES = (
     '            self._app.router.add_post("/api/whatsapp/logout", self._mag_wa_logout)\n'
-    "            # _mag_tg_pairing: Telegram pairing approval. Logic in mag_telegram_pairing.py.\n"
+    "            # _mag_tg_pairing: Telegram access control. Logic in mag_telegram_pairing.py.\n"
     '            self._app.router.add_get("/api/telegram/pairing", self._mag_tg_pairing_list)\n'
     '            self._app.router.add_post("/api/telegram/pairing/approve", self._mag_tg_pairing_approve)\n'
+    '            self._app.router.add_post("/api/telegram/pairing/approve_user", self._mag_tg_pairing_approve_user)\n'
     '            self._app.router.add_post("/api/telegram/pairing/revoke", self._mag_tg_pairing_revoke)\n'
+    '            self._app.router.add_post("/api/telegram/pairing/block", self._mag_tg_pairing_block)\n'
+    '            self._app.router.add_post("/api/telegram/pairing/unblock", self._mag_tg_pairing_unblock)\n'
 )
 
-# --- Edit 2: 3 thin wrapper methods (after the WhatsApp logout wrapper) --------
+# --- Edit 2: thin wrapper methods (after the WhatsApp logout wrapper) ----------
 OLD_METHODS = (
     "    async def _mag_wa_logout(self, request):\n"
     "        from gateway.platforms import mag_whatsapp_pairing as _wa\n"
@@ -68,9 +74,21 @@ NEW_METHODS = (
     "        from gateway.platforms import mag_telegram_pairing as _tg\n"
     "        return await _tg.handle_approve(request)\n"
     "\n"
+    "    async def _mag_tg_pairing_approve_user(self, request):\n"
+    "        from gateway.platforms import mag_telegram_pairing as _tg\n"
+    "        return await _tg.handle_approve_user(request)\n"
+    "\n"
     "    async def _mag_tg_pairing_revoke(self, request):\n"
     "        from gateway.platforms import mag_telegram_pairing as _tg\n"
     "        return await _tg.handle_revoke(request)\n"
+    "\n"
+    "    async def _mag_tg_pairing_block(self, request):\n"
+    "        from gateway.platforms import mag_telegram_pairing as _tg\n"
+    "        return await _tg.handle_block(request)\n"
+    "\n"
+    "    async def _mag_tg_pairing_unblock(self, request):\n"
+    "        from gateway.platforms import mag_telegram_pairing as _tg\n"
+    "        return await _tg.handle_unblock(request)\n"
 )
 
 
@@ -82,7 +100,7 @@ def main() -> None:
     text = apply(text, OLD_ROUTES, NEW_ROUTES, "register /api/telegram/pairing routes")
     text = apply(text, OLD_METHODS, NEW_METHODS, "wrapper methods")
     API_SERVER.write_text(text)
-    print("  api_server Telegram pairing routes patched.")
+    print("  api_server Telegram access-control routes patched.")
 
 
 if __name__ == "__main__":

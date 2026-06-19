@@ -29,9 +29,10 @@ SCHEDULER_PY = pathlib.Path(
 
 MARKER = "MAG: cron run history"
 
-# 1) Module-level helper, inserted right before `def tick(`.
+# 1) Module-level helper, inserted right before `def run_one_job(` — the shared
+#    per-job firing body (extracted from tick's old `_process_job` closure upstream).
 ANCHOR_TICK = (
-    "def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> int:\n"
+    "def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -> bool:\n"
 )
 HELPER = (
     "def _mag_report_job_run(job, success, error, delivery_error, started_at, output=None):\n"
@@ -77,39 +78,39 @@ HELPER = (
     "\n"
 )
 
-# 2) Capture a per-run start timestamp at the top of _process_job.
+# 2) Capture a per-run start timestamp at the top of run_one_job's body (right
+#    before it dispatches to run_job). Module-level function → 8-space indent.
 OLD_START = (
-    "        def _process_job(job: dict) -> bool:\n"
-    '            """Run one due job end-to-end: execute, save, deliver, mark."""\n'
-    "            try:\n"
+    "    try:\n"
+    "        success, output, final_response, error = run_job(job)\n"
 )
 NEW_START = (
-    "        def _process_job(job: dict) -> bool:\n"
-    '            """Run one due job end-to-end: execute, save, deliver, mark."""\n'
-    "            _mag_run_started_at = _hermes_now().isoformat()  # MAG: cron run history\n"
-    "            try:\n"
+    "    try:\n"
+    "        _mag_run_started_at = _hermes_now().isoformat()  # MAG: cron run history\n"
+    "        success, output, final_response, error = run_job(job)\n"
 )
 
 # 3) Emit the run record on BOTH the normal completion path and the exception path.
+#    Module-level run_one_job → 8-space indent (was 16-space inside tick's closure).
 OLD_MARK = (
-    "                mark_job_run(job[\"id\"], success, error, delivery_error=delivery_error)\n"
-    "                return True\n"
+    "        mark_job_run(job[\"id\"], success, error, delivery_error=delivery_error)\n"
+    "        return True\n"
     "\n"
-    "            except Exception as e:\n"
-    "                logger.error(\"Error processing job %s: %s\", job['id'], e)\n"
-    "                mark_job_run(job[\"id\"], False, str(e))\n"
-    "                return False\n"
+    "    except Exception as e:\n"
+    "        logger.error(\"Error processing job %s: %s\", job['id'], e)\n"
+    "        mark_job_run(job[\"id\"], False, str(e))\n"
+    "        return False\n"
 )
 NEW_MARK = (
-    "                mark_job_run(job[\"id\"], success, error, delivery_error=delivery_error)\n"
-    "                _mag_report_job_run(job, success, error, delivery_error, _mag_run_started_at, final_response)  # MAG: cron run history\n"
-    "                return True\n"
+    "        mark_job_run(job[\"id\"], success, error, delivery_error=delivery_error)\n"
+    "        _mag_report_job_run(job, success, error, delivery_error, _mag_run_started_at, final_response)  # MAG: cron run history\n"
+    "        return True\n"
     "\n"
-    "            except Exception as e:\n"
-    "                logger.error(\"Error processing job %s: %s\", job['id'], e)\n"
-    "                mark_job_run(job[\"id\"], False, str(e))\n"
-    "                _mag_report_job_run(job, False, str(e), None, _mag_run_started_at, None)  # MAG: cron run history\n"
-    "                return False\n"
+    "    except Exception as e:\n"
+    "        logger.error(\"Error processing job %s: %s\", job['id'], e)\n"
+    "        mark_job_run(job[\"id\"], False, str(e))\n"
+    "        _mag_report_job_run(job, False, str(e), None, _mag_run_started_at, None)  # MAG: cron run history\n"
+    "        return False\n"
 )
 
 
