@@ -77,39 +77,53 @@ HELPER = (
     "\n"
 )
 
-# 2) Capture a per-run start timestamp at the top of _process_job.
-OLD_START = (
+# 2) Capture a per-run start timestamp at the top of the execution chokepoint.
+# Hermes used to do the whole job body inside tick()._process_job; newer builds
+# moved that body into module-level run_one_job(), and _process_job became a thin
+# wrapper. Support BOTH anchors so the patch survives the refactor.
+OLD_START_PROCESS = (
     "        def _process_job(job: dict) -> bool:\n"
     '            """Run one due job end-to-end: execute, save, deliver, mark."""\n'
     "            try:\n"
 )
-NEW_START = (
+NEW_START_PROCESS = (
     "        def _process_job(job: dict) -> bool:\n"
     '            """Run one due job end-to-end: execute, save, deliver, mark."""\n'
     "            _mag_run_started_at = _hermes_now().isoformat()  # MAG: cron run history\n"
     "            try:\n"
 )
+OLD_START_RUN_ONE = (
+    "    failure is recorded via ``mark_job_run``), False only if processing raised.\n"
+    '    """\n'
+    "    try:\n"
+)
+NEW_START_RUN_ONE = (
+    "    failure is recorded via ``mark_job_run``), False only if processing raised.\n"
+    '    """\n'
+    "    _mag_run_started_at = _hermes_now().isoformat()  # MAG: cron run history\n"
+    "    try:\n"
+)
 
 # 3) Emit the run record on BOTH the normal completion path and the exception path.
-OLD_MARK = (
-    "                mark_job_run(job[\"id\"], success, error, delivery_error=delivery_error)\n"
-    "                return True\n"
-    "\n"
-    "            except Exception as e:\n"
-    "                logger.error(\"Error processing job %s: %s\", job['id'], e)\n"
-    "                mark_job_run(job[\"id\"], False, str(e))\n"
-    "                return False\n"
+# Keep these anchors small so formatting/comment churn in Hermes doesn't break
+# the patch when the semantic chokepoints are still the same.
+OLD_MARK_SUCCESS = (
+    "        mark_job_run(job[\"id\"], success, error, delivery_error=delivery_error)\n"
+    "        return True\n"
 )
-NEW_MARK = (
-    "                mark_job_run(job[\"id\"], success, error, delivery_error=delivery_error)\n"
-    "                _mag_report_job_run(job, success, error, delivery_error, _mag_run_started_at, final_response)  # MAG: cron run history\n"
-    "                return True\n"
-    "\n"
-    "            except Exception as e:\n"
-    "                logger.error(\"Error processing job %s: %s\", job['id'], e)\n"
-    "                mark_job_run(job[\"id\"], False, str(e))\n"
-    "                _mag_report_job_run(job, False, str(e), None, _mag_run_started_at, None)  # MAG: cron run history\n"
-    "                return False\n"
+NEW_MARK_SUCCESS = (
+    "        mark_job_run(job[\"id\"], success, error, delivery_error=delivery_error)\n"
+    "        _mag_report_job_run(job, success, error, delivery_error, _mag_run_started_at, final_response)  # MAG: cron run history\n"
+    "        return True\n"
+)
+OLD_MARK_EXCEPT = (
+    "        mark_job_run(job[\"id\"], False, str(e))\n"
+    "        return False\n"
+)
+NEW_MARK_EXCEPT = (
+    "        mark_job_run(job[\"id\"], False, str(e))\n"
+    "        _mag_report_job_run(job, False, str(e), None, _mag_run_started_at, None)  # MAG: cron run history\n"
+    "        return False\n"
 )
 
 
@@ -124,14 +138,19 @@ def main() -> None:
 
     if ANCHOR_TICK not in text:
         raise SystemExit("patch_cron_job_runs: `def tick(...)` anchor missing (Hermes changed).")
-    if OLD_START not in text:
-        raise SystemExit("patch_cron_job_runs: `_process_job` start anchor missing (Hermes changed).")
-    if OLD_MARK not in text:
-        raise SystemExit("patch_cron_job_runs: mark_job_run/except anchor missing (Hermes changed).")
-
     text = text.replace(ANCHOR_TICK, HELPER + ANCHOR_TICK, 1)
-    text = text.replace(OLD_START, NEW_START, 1)
-    text = text.replace(OLD_MARK, NEW_MARK, 1)
+    if OLD_START_RUN_ONE in text:
+        text = text.replace(OLD_START_RUN_ONE, NEW_START_RUN_ONE, 1)
+    elif OLD_START_PROCESS in text:
+        text = text.replace(OLD_START_PROCESS, NEW_START_PROCESS, 1)
+    else:
+        raise SystemExit("patch_cron_job_runs: no supported start anchor found (Hermes changed).")
+    if OLD_MARK_SUCCESS not in text:
+        raise SystemExit("patch_cron_job_runs: success mark anchor missing (Hermes changed).")
+    if OLD_MARK_EXCEPT not in text:
+        raise SystemExit("patch_cron_job_runs: exception mark anchor missing (Hermes changed).")
+    text = text.replace(OLD_MARK_SUCCESS, NEW_MARK_SUCCESS, 1)
+    text = text.replace(OLD_MARK_EXCEPT, NEW_MARK_EXCEPT, 1)
     SCHEDULER_PY.write_text(text)
     print("OK: patched cron scheduler with per-run history reporting")
 
