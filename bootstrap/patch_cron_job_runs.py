@@ -175,16 +175,16 @@ def main() -> None:
 
     # Use regex for mark anchors (handles whitespace variations)
     # Pattern for OLD_MARK_SUCCESS: find the mark_job_run line in success path
-    OLD_MARK_SUCCESS_PATTERN = r'mark_job_run\(job\["id"\],\s*success,\s*error,\s*delivery_error=delivery_error\)\s+return True'
-    NEW_MARK_SUCCESS_REPL = r'mark_job_run(job["id"], success, error, delivery_error=delivery_error)\n        _mag_report_job_run(job, success, error, delivery_error, _mag_run_started_at, final_response)  # MAG: cron run history\n        return True'
+    OLD_MARK_SUCCESS_PATTERN = r'(\s{16})mark_job_run\(job\["id"\],\s*success,\s*error,\s*delivery_error=delivery_error\)\n(\s{16})return True'
+    NEW_MARK_SUCCESS_REPL = r'\1mark_job_run(job["id"], success, error, delivery_error=delivery_error)\n\1_mag_report_job_run(job, success, error, delivery_error, _mag_run_started_at, final_response)  # MAG: cron run history\n\2return True'
 
     if not re.search(OLD_MARK_SUCCESS_PATTERN, text, re.MULTILINE):
         raise SystemExit("patch_cron_job_runs: success mark anchor missing (Hermes changed).")
     text = replace_regex(text, OLD_MARK_SUCCESS_PATTERN, NEW_MARK_SUCCESS_REPL, "success mark anchor")
 
     # Pattern for OLD_MARK_EXCEPT: find the mark_job_run line in exception path
-    OLD_MARK_EXCEPT_PATTERN = r'mark_job_run\(job\["id"\],\s*False,\s*str\(e\)\)\s+return False'
-    NEW_MARK_EXCEPT_REPL = r'mark_job_run(job["id"], False, str(e))\n        _mag_report_job_run(job, False, str(e), None, _mag_run_started_at, None)  # MAG: cron run history\n        return False'
+    OLD_MARK_EXCEPT_PATTERN = r'(\s{12})mark_job_run\(job\["id"\],\s*False,\s*str\(e\)\)\n(\s{12})return False'
+    NEW_MARK_EXCEPT_REPL = r'\1mark_job_run(job["id"], False, str(e))\n\1_mag_report_job_run(job, False, str(e), None, _mag_run_started_at, None)  # MAG: cron run history\n\2return False'
 
     if not re.search(OLD_MARK_EXCEPT_PATTERN, text, re.MULTILINE):
         raise SystemExit("patch_cron_job_runs: exception mark anchor missing (Hermes changed).")
