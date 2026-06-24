@@ -183,7 +183,8 @@ def main() -> None:
     text = replace_regex(text, OLD_MARK_SUCCESS_PATTERN, NEW_MARK_SUCCESS_REPL, "success mark anchor")
 
     # Pattern for OLD_MARK_EXCEPT: find the mark_job_run line in exception path
-    OLD_MARK_EXCEPT_PATTERN = r'(\s{12})mark_job_run\(job\["id"\],\s*False,\s*str\(e\)\)\n(\s{12})return False'
+    # Note: exception path has 16 spaces indent (same as success path inside try)
+    OLD_MARK_EXCEPT_PATTERN = r'(\s{16})mark_job_run\(job\["id"\],\s*False,\s*str\(e\)\)\n(\s{16})return False'
     NEW_MARK_EXCEPT_REPL = r'\1mark_job_run(job["id"], False, str(e))\n\1_mag_report_job_run(job, False, str(e), None, _mag_run_started_at, None)  # MAG: cron run history\n\2return False'
 
     if not re.search(OLD_MARK_EXCEPT_PATTERN, text, re.MULTILINE):
