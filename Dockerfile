@@ -31,11 +31,12 @@ COPY --chown=hermes:hermes bootstrap/patch_disable_channel_code_exec.py /opt/her
 COPY --chown=hermes:hermes bootstrap/patch_suppress_reset_banner.py /opt/hermes/bootstrap/patch_suppress_reset_banner.py
 COPY --chown=hermes:hermes entrypoint.sh /opt/hermes/entrypoint.sh
 
-# MAG Google Workspace + OneDrive MCP servers (stdio, zero-dependency Node). The
+# MAG bundled MCP servers (stdio, zero-dependency Node). The
 # MAG control plane wires them per-tenant via generated mcp_servers entries.
-RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp && chown -R hermes:hermes /opt/mag
+RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/c6-bank-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp && chown -R hermes:hermes /opt/mag
 COPY --chown=hermes:hermes mcp/google/server.mjs /opt/mag/google-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/onedrive/server.mjs /opt/mag/onedrive-mcp/server.mjs
+COPY --chown=hermes:hermes mcp/c6-bank/server.mjs /opt/mag/c6-bank-mcp/server.mjs
 
 # MAG Linear + ClickUp MCP servers (stdio, zero-dependency Node). Use the connector
 # token the user authorized in Fontes (fetched per-call from the MAG control plane).
@@ -47,6 +48,12 @@ COPY --chown=hermes:hermes mcp/clickup/server.mjs /opt/mag/clickup-mcp/server.mj
 # calling arbitrary HTTP APIs. Enables users to connect any REST API as a knowledge source.
 RUN mkdir -p /opt/mag/custom-proxy-mcp && chown -R hermes:hermes /opt/mag
 COPY --chown=hermes:hermes mcp/custom-proxy/server.mjs /opt/mag/custom-proxy-mcp/server.mjs
+
+# MAG WhatsApp Outbound MCP server (stdio, zero-dependency Node). Exposes send_whatsapp_message
+# tool for proactive messaging with confirmation validation, allowlist checking, and audit logging.
+# The bridge handles WHATSAPP_OUTBOUND_ALLOWED_USERS validation and JID normalization.
+RUN mkdir -p /opt/mag/whatsapp-outbound-mcp && chown -R hermes:hermes /opt/mag
+COPY --chown=hermes:hermes mcp/whatsapp-outbound/server.mjs /opt/mag/whatsapp-outbound-mcp/server.mjs
 
 # ByteRover memory OAuth helper — driven by the control plane (admin "Conectar memória").
 # Talks to the per-tenant brv daemon's transport (startOAuth/awaitOAuthCallback). See header.
@@ -151,6 +158,13 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_boot_deps
 # Prevents jidDecode failures when users send messages to targets listed without suffix.
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_jid_normalization.py /opt/hermes/bootstrap/patch_whatsapp_jid_normalization.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_jid_normalization.py
+
+# WhatsApp outbound allowlist: enable proactive messaging with separate allowlist and audit.
+# Adds WHATSAPP_OUTBOUND_ALLOWED_USERS (distinct from WHATSAPP_ALLOWED_USERS), normalizes
+# JIDs in /send and /send-media endpoints, validates confirmation flag, and logs all attempts.
+# Must run AFTER jid normalization (depends on normalizeWhatsAppJid function).
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_outbound.py /opt/hermes/bootstrap/patch_whatsapp_outbound.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_outbound.py
 
 # Bake the WhatsApp bridge deps (Baileys) into the image. Otherwise the bridge runs a
 # slow/fragile ~3-min `npm install` on the FIRST pairing at runtime — which looks like
