@@ -164,26 +164,16 @@ NEW_AFTER_NORMALIZE = (
 # ============================================================================
 
 # Step 1: Add confirmed_by_user to destructuring (keep replyTo)
-SEND_DESTRUCTURE_OLD = """  const { chatId, message, replyTo } = req.body;
-  if (!chatId || !message) {
-    return res.status(400).json({ error: 'chatId and message are required' });
-  }
+SEND_DESTRUCTURE_OLD = """  const { chatId, message, replyTo } = req.body;"""
+SEND_DESTRUCTURE_NEW = """  const { chatId, message, replyTo, confirmed_by_user } = req.body;"""
 
-  try {"""
-SEND_DESTRUCTURE_NEW = """  const { chatId, message, replyTo, confirmed_by_user } = req.body;
-  if (!chatId || !message) {
-    return res.status(400).json({ error: 'chatId and message are required' });
-  }
-
-  // _mag_whatsapp_outbound: validate destination and allowlist
-  let validatedChatId;
-  try {
-    validatedChatId = validateAndPrepareDestination(chatId, confirmed_by_user);
-  } catch (err) {
-    return res.status(403).json({ error: err.message });
-  }
-
-  try {"""
+# Step 1.5: Add validation inside the try block
+SEND_VALIDATION_OLD = """  try {
+    const chunks = splitLongMessage(formatOutgoingMessage(message));"""
+SEND_VALIDATION_NEW = """  try {
+    // _mag_whatsapp_outbound: validate destination and allowlist
+    const validatedChatId = validateAndPrepareDestination(chatId, confirmed_by_user);
+    const chunks = splitLongMessage(formatOutgoingMessage(message));"""
 
 # Step 2: Replace chatId with validatedChatId in sendWithTimeout call
 SEND_CHATID_OLD = """      const sent = await sendWithTimeout(chatId, { text: chunks[i] });"""
@@ -220,32 +210,21 @@ SEND_ERROR_NEW = """  } catch (err) {
 
 # Check if /send-media endpoint exists (may not in older Hermes versions)
 # Current structure:
-#   const { chatId, mediaType, mediaUrl, caption } = req.body;
+#   const { chatId, filePath, mediaType, caption, fileName } = req.body;
 
-SEND_MEDIA_DESTRUCTURE_OLD = """  const { chatId, mediaType, mediaUrl, caption } = req.body;
-  if (!chatId || !mediaType || !mediaUrl) {
-    return res.status(400).json({ error: 'chatId, mediaType and mediaUrl are required' });
-  }
+SEND_MEDIA_DESTRUCTURE_OLD = """  const { chatId, filePath, mediaType, caption, fileName } = req.body;"""
+SEND_MEDIA_DESTRUCTURE_NEW = """  const { chatId, filePath, mediaType, caption, fileName, confirmed_by_user } = req.body;"""
 
-  try {"""
-SEND_MEDIA_DESTRUCTURE_NEW = """  const { chatId, mediaType, mediaUrl, caption, confirmed_by_user } = req.body;
-  if (!chatId || !mediaType || !mediaUrl) {
-    return res.status(400).json({ error: 'chatId, mediaType and mediaUrl are required' });
-  }
-
-  // _mag_whatsapp_outbound: validate destination and allowlist
-  let validatedChatId;
-  try {
-    validatedChatId = validateAndPrepareDestination(chatId, confirmed_by_user);
-  } catch (err) {
-    return res.status(403).json({ error: err.message });
-  }
-
-  try {"""
+SEND_MEDIA_VALIDATION_OLD = """  try {
+    if (!existsSync(filePath)) {"""
+SEND_MEDIA_VALIDATION_NEW = """  try {
+    // _mag_whatsapp_outbound: validate destination and allowlist
+    const validatedChatId = validateAndPrepareDestination(chatId, confirmed_by_user);
+    if (!existsSync(filePath)) {"""
 
 # Replace chatId with validatedChatId in sendMessage call
-SEND_MEDIA_CHATID_OLD = """    await sock.sendMessage(chatId, {"""
-SEND_MEDIA_CHATID_NEW = """    await sock.sendMessage(validatedChatId, {"""
+SEND_MEDIA_CHATID_OLD = """      await sock.sendMessage(chatId, {"""
+SEND_MEDIA_CHATID_NEW = """      await sock.sendMessage(validatedChatId, {"""
 
 # Add audit logging for /send-media
 SEND_MEDIA_SUCCESS_OLD = """    res.json({
@@ -274,7 +253,7 @@ def main() -> None:
     if not BRIDGE_JS.exists():
         sys.exit(f"FATAL: bridge.js not found at {BRIDGE_JS}")
 
-    text = BRIDGE_JS.read_text()
+    text = BRIDGE_JS.read_text(encoding='utf-8')
     print(f"Patching {BRIDGE_JS} ({MARKER})")
 
     # Skip if main marker already present
@@ -293,14 +272,17 @@ def main() -> None:
     text = apply(text, OLD_AFTER_NORMALIZE, NEW_AFTER_NORMALIZE, "outbound validation functions")
 
     # Part 2: Patch /send endpoint
-    text = apply(text, SEND_DESTRUCTURE_OLD, SEND_DESTRUCTURE_NEW, "/send destructuring + validation")
+    text = apply(text, SEND_DESTRUCTURE_OLD, SEND_DESTRUCTURE_NEW, "/send destructuring")
+    text = apply(text, SEND_VALIDATION_OLD, SEND_VALIDATION_NEW, "/send validation")
     text = apply(text, SEND_CHATID_OLD, SEND_CHATID_NEW, "/send use validatedChatId")
     text = apply(text, SEND_SUCCESS_OLD, SEND_SUCCESS_NEW, "/send success audit")
     text = apply(text, SEND_ERROR_OLD, SEND_ERROR_NEW, "/send error audit")
 
     # Part 3: Patch /send-media endpoint (may not exist in older versions)
     if SEND_MEDIA_DESTRUCTURE_OLD in text:
-        text = apply(text, SEND_MEDIA_DESTRUCTURE_OLD, SEND_MEDIA_DESTRUCTURE_NEW, "/send-media destructuring + validation")
+        text = apply(text, SEND_MEDIA_DESTRUCTURE_OLD, SEND_MEDIA_DESTRUCTURE_NEW, "/send-media destructuring")
+    if SEND_MEDIA_VALIDATION_OLD in text:
+        text = apply(text, SEND_MEDIA_VALIDATION_OLD, SEND_MEDIA_VALIDATION_NEW, "/send-media validation")
     if SEND_MEDIA_CHATID_OLD in text:
         text = apply(text, SEND_MEDIA_CHATID_OLD, SEND_MEDIA_CHATID_NEW, "/send-media use validatedChatId")
     if SEND_MEDIA_SUCCESS_OLD in text:
