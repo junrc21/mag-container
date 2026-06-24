@@ -108,33 +108,34 @@ NEW_START_RUN_ONE = (
 # Keep these anchors small so formatting/comment churn in Hermes doesn't break
 # the patch when the semantic chokepoints are still the same.
 # Updated for Hermes refactor that added empty response check and logger.error.
+# Use double quotes consistently to match scheduler.py formatting.
 OLD_MARK_SUCCESS = (
     '        if success and not final_response.strip():\n'
     '            success = False\n'
     '            error = "Agent completed but produced empty response (model error, timeout, or misconfiguration)"\n'
     '        mark_job_run(job["id"], success, error, delivery_error=delivery_error)\n'
-    "        return True\n"
+    '        return True\n'
 )
 NEW_MARK_SUCCESS = (
     '        if success and not final_response.strip():\n'
     '            success = False\n'
     '            error = "Agent completed but produced empty response (model error, timeout, or misconfiguration)"\n'
     '        mark_job_run(job["id"], success, error, delivery_error=delivery_error)\n'
-    "        _mag_report_job_run(job, success, error, delivery_error, _mag_run_started_at, final_response)  # MAG: cron run history\n"
-    "        return True\n"
+    '        _mag_report_job_run(job, success, error, delivery_error, _mag_run_started_at, final_response)  # MAG: cron run history\n'
+    '        return True\n'
 )
 OLD_MARK_EXCEPT = (
-    "    except Exception as e:\n"
+    '    except Exception as e:\n'
     '        logger.error("Error processing job %s: %s", job[\'id\'], e)\n'
     '        mark_job_run(job["id"], False, str(e))\n'
-    "        return False\n"
+    '        return False\n'
 )
 NEW_MARK_EXCEPT = (
-    "    except Exception as e:\n"
+    '    except Exception as e:\n'
     '        logger.error("Error processing job %s: %s", job[\'id\'], e)\n'
     '        mark_job_run(job["id"], False, str(e))\n'
-    "        _mag_report_job_run(job, False, str(e), None, _mag_run_started_at, None)  # MAG: cron run history\n"
-    "        return False\n"
+    '        _mag_report_job_run(job, False, str(e), None, _mag_run_started_at, None)  # MAG: cron run history\n'
+    '        return False\n'
 )
 
 
