@@ -60,12 +60,13 @@ def apply(text: str, old: str, new: str, label: str) -> str:
 
 def apply_regex(text: str, pattern: str, replacement: str, label: str) -> str:
     """Apply regex-based patch for more flexible matching."""
-    if re.search(pattern, text):
-        if re.search(re.escape(replacement), text):
+    if re.search(pattern, text, re.MULTILINE | re.DOTALL):
+        # Check if already patched by looking for our marker in the replacement
+        if MARKER in text and "_mag_report_job_run" not in replacement:
             print(f"  [skip] {label}: already patched")
             return text
         print(f"  [ok]   {label}")
-        return re.sub(pattern, replacement, text, count=1)
+        return re.sub(pattern, replacement, text, count=1, flags=re.MULTILINE | re.DOTALL)
     print(f"  [skip] {label}: pattern not found (may not apply)")
     return text
 
@@ -132,13 +133,19 @@ function auditOutboundSend(originalChatId, normalizedChatId, result, error = nul
 }
 
 // _mag_whatsapp_outbound: validate and normalize destination for sending
-function validateAndPrepareDestination(chatId) {
+function validateAndPrepareDestination(chatId, confirmedByUser = false) {
   const original = chatId;
   const normalized = normalizeWhatsAppJid(chatId);
 
+  // Require explicit confirmation for proactive messaging
+  if (confirmedByUser !== true) {
+    auditOutboundSend(original, normalized, 'denied', 'Missing confirmed_by_user flag');
+    throw new Error('Proactive messaging requires explicit user confirmation (confirmed_by_user=true).');
+  }
+
   if (!isOutboundAllowed(normalized)) {
-    auditOutboundSend(original, normalized, 'denied', 'Destination not in WHATSAPP_OUTBOUND_ALLOWED_USERS');
-    throw new Error(`Destination ${chatId} is not allowed for proactive messaging. Check WHATSAPP_OUTBOUND_ALLOWED_USERS.`);
+    auditOutboundSend(original, normalized, 'denied', 'Destination not in outbound allowlist');
+    throw new Error(`Destination ${chatId} is not allowed for proactive messaging.`);
   }
 
   return normalized;
@@ -154,66 +161,94 @@ NEW_AFTER_NORMALIZE = (
 
 
 # ============================================================================
-# Part 2: Patch /send endpoint - normalize chatId and validate allowlist
+# Part 2: Patch /send endpoint - add confirmed_by_user, normalize and validate
 # ============================================================================
-# This is the MAIN endpoint for sending messages. We patch it to:
-# 1. Validate confirmed_by_user flag
-# 2. Normalize the chatId using normalizeWhatsAppJid
-# 3. Check against WHATSAPP_OUTBOUND_ALLOWED_USERS
-# 4. Add audit logging
+# Current structure (Hermes):
+#   const { chatId, message, replyTo } = req.body;
+# We need to add confirmed_by_user to the destructuring and validate it
 
-# Find and replace the /send endpoint definition
-SEND_PATTERN = r"(app\.post\('/send', async \(req, res\) => \{\s*try \{\s*const \{ chatId, message, confirmed_by_user \} = req\.body;)"
-SEND_REPLACEMENT = r"""app.post('/send', async (req, res) => {
+# Pattern to find the destructuring line in /send endpoint
+SEND_DESTRUCTURE_PATTERN = r"(app\.post\('/send', async \(req, res\) => \{\s*if \(!sock \|\| connectionState !== 'connected'\) \{\s*return res\.status\(503\)\.json\(\{ error: 'Not connected to WhatsApp' \}\);\s*\}\s*const \{ chatId, message, replyTo \} = req\.body;)"
+
+SEND_DESTRUCTURE_REPLACEMENT = r"""app.post('/send', async (req, res) => {
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ error: 'Not connected to WhatsApp' });
+  }
+  const { chatId, message, replyTo, confirmed_by_user } = req.body;"""
+
+# Pattern to add validation and normalization after destructuring
+SEND_VALIDATION_PATTERN = r"(\s*// Validate required fields\s*if \(!chatId \|\| !message\) \{\s*return res\.status\(400\)\.json\(\{ error: 'chatId and message are required' \}\);\s*\})"
+SEND_VALIDATION_REPLACEMENT = r"""// Validate required fields
+  if (!chatId || !message) {
+    return res.status(400).json({ error: 'chatId and message are required' });
+  }
+  // _mag_whatsapp_outbound: validate, normalize and check allowlist
+  let validatedChatId;
   try {
-    const { chatId, message, confirmed_by_user } = req.body;
-    // _mag_whatsapp_outbound: validate confirmation and normalize destination
-    if (confirmed_by_user !== true) {
-      auditOutboundSend(chatId, normalizeWhatsAppJid(chatId), 'denied', 'Missing confirmed_by_user flag');
-      return res.status(403).json({ error: 'Proactive messaging requires explicit user confirmation (confirmed_by_user=true).' });
-    }
-    const targetChatId = validateAndPrepareDestination(chatId);"""
+    validatedChatId = validateAndPrepareDestination(chatId, confirmed_by_user);
+  } catch (err) {
+    return res.status(403).json({ error: err.message });
+  }"""
+
+# Pattern to replace chatId with validatedChatId in the send call
+SEND_CALL_PATTERN = r"(const result = await sendWithTimeout\(\s*chatId,\s*message\s*\);)"
+SEND_CALL_REPLACEMENT = r"""const result = await sendWithTimeout(validatedChatId, message);"""
+
+# Pattern to add audit logging on success
+SEND_SUCCESS_PATTERN = r"(res\.json\(\{\s*success: true,\s*messageId: messageIds\[messageIds\.length - 1\],\s*messageIds\s*\}\);)"
+SEND_SUCCESS_REPLACEMENT = r"""auditOutboundSend(chatId, validatedChatId, 'success');
+  res.json({ success: true, messageId: messageIds[messageIds.length - 1], messageIds });"""
+
+# Pattern to add audit logging on error
+SEND_ERROR_PATTERN = r"(\} catch \(err\) \{\s*res\.status\(500\)\.json\(\{\s*error: err\.message\s*\}\);\s*\})"
+SEND_ERROR_REPLACEMENT = r"""} catch (err) {
+  auditOutboundSend(chatId, chatId, 'error', err);
+  res.status(500).json({ error: err.message });
+  }"""
 
 
 # ============================================================================
 # Part 3: Patch /send-media endpoint
 # ============================================================================
-SEND_MEDIA_PATTERN = r"(app\.post\('/send-media', async \(req, res\) => \{\s*try \{\s*const \{ chatId, mediaType, mediaUrl, caption, confirmed_by_user \} = req\.body;)"
-SEND_MEDIA_REPLACEMENT = r"""app.post('/send-media', async (req, res) => {
+# Similar pattern for /send-media endpoint
+SEND_MEDIA_DESTRUCTURE_PATTERN = r"(app\.post\('/send-media', async \(req, res\) => \{\s*if \(!sock \|\| connectionState !== 'connected'\) \{\s*return res\.status\(503\)\.json\(\{ error: 'Not connected to WhatsApp' \}\);\s*\}\s*const \{ chatId, mediaType, mediaUrl, caption \} = req\.body;)"
+
+SEND_MEDIA_DESTRUCTURE_REPLACEMENT = r"""app.post('/send-media', async (req, res) => {
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ error: 'Not connected to WhatsApp' });
+  }
+  const { chatId, mediaType, mediaUrl, caption, confirmed_by_user } = req.body;"""
+
+# Validation for /send-media (similar structure)
+SEND_MEDIA_VALIDATION_PATTERN = r"(\s*// Validate required fields\s*if \(!chatId \|\| !mediaType \|\| !mediaUrl\) \{\s*return res\.status\(400\)\.json\(\{ error: 'chatId, mediaType and mediaUrl are required' \}\);\s*\})"
+SEND_MEDIA_VALIDATION_REPLACEMENT = r"""// Validate required fields
+  if (!chatId || !mediaType || !mediaUrl) {
+    return res.status(400).json({ error: 'chatId, mediaType and mediaUrl are required' });
+  }
+  // _mag_whatsapp_outbound: validate, normalize and check allowlist
+  let validatedChatId;
   try {
-    const { chatId, mediaType, mediaUrl, caption, confirmed_by_user } = req.body;
-    // _mag_whatsapp_outbound: validate confirmation and normalize destination
-    if (confirmed_by_user !== true) {
-      auditOutboundSend(chatId, normalizeWhatsAppJid(chatId), 'denied', 'Missing confirmed_by_user flag');
-      return res.status(403).json({ error: 'Proactive messaging requires explicit user confirmation (confirmed_by_user=true).' });
-    }
-    const targetChatId = validateAndPrepareDestination(chatId);"""
+    validatedChatId = validateAndPrepareDestination(chatId, confirmed_by_user);
+  } catch (err) {
+    return res.status(403).json({ error: err.message });
+  }"""
 
+# Replace chatId with validatedChatId in /send-media
+# Need to handle the fact that the code might reference chatId multiple times
+# Look for the actual sendWithTimeout call or the Baileys sendMessage call
+SEND_MEDIA_SEND_PATTERN = r"(await sock\.sendMessage\(\s*chatId,\s*\{)"
+SEND_MEDIA_SEND_REPLACEMENT = r"""await sock.sendMessage(validatedChatId, {"""
 
-# ============================================================================
-# Part 4: Replace chatId with targetChatId in sendWithTimeout calls
-# ============================================================================
-# In /send endpoint
-SEND_TIMEOUT_PATTERN = r"(const result = await sendWithTimeout\(chatId, message\);)"
-SEND_TIMEOUT_REPLACEMENT = r"""const result = await sendWithTimeout(targetChatId, message);"""
+# Success/error logging for /send-media (similar to /send)
+SEND_MEDIA_SUCCESS_PATTERN = r"(res\.json\(\{\s*success: true,\s*messageId\s*\}\);)"
+SEND_MEDIA_SUCCESS_REPLACEMENT = r"""auditOutboundSend(chatId, validatedChatId, 'success');
+  res.json({ success: true, messageId });"""
 
-# In /send-media endpoint (needs to handle mediaContent variable)
-SEND_MEDIA_TIMEOUT_PATTERN = r"(const result = await sendWithTimeout\(\s*chatId,)"
-SEND_MEDIA_TIMEOUT_REPLACEMENT = r"""const result = await sendWithTimeout(
-      targetChatId,"""
-
-
-# ============================================================================
-# Part 5: Add audit logging on success/error
-# ============================================================================
-# After successful send
-SEND_SUCCESS_PATTERN = r"(res\.json\(\{ success: true, result \}\);)\s*\} catch \(error\) \{\s*console\.error\('Error sending message:', error\);\s*res\.status\(500\)\.json\(\{ error: 'Failed to send message' \}\);"
-SEND_SUCCESS_REPLACEMENT = r"""auditOutboundSend(chatId, targetChatId, 'success');
-    res.json({ success: true, result });
-  } catch (error) {
-    console.error('Error sending message:', error);
-    auditOutboundSend(chatId, normalizeWhatsAppJid(chatId), 'error', error);
-    res.status(500).json({ error: 'Failed to send message' });"""
+SEND_MEDIA_ERROR_PATTERN = r"(\} catch \(err\) \{\s*res\.status\(500\)\.json\(\{\s*error: err\.message\s*\}\);\s*\})"
+SEND_MEDIA_ERROR_REPLACEMENT = r"""} catch (err) {
+  auditOutboundSend(chatId, chatId, 'error', err);
+  res.status(500).json({ error: err.message });
+  }"""
 
 
 def main() -> None:
@@ -239,12 +274,19 @@ def main() -> None:
     # Part 1: Add outbound validation functions
     text = apply(text, OLD_AFTER_NORMALIZE, NEW_AFTER_NORMALIZE, "outbound validation functions")
 
-    # Part 2-5: Patch endpoints using regex (more flexible matching)
-    text = apply_regex(text, SEND_PATTERN, SEND_REPLACEMENT, "/send endpoint validation")
-    text = apply_regex(text, SEND_MEDIA_PATTERN, SEND_MEDIA_REPLACEMENT, "/send-media endpoint validation")
-    text = apply_regex(text, SEND_TIMEOUT_PATTERN, SEND_TIMEOUT_REPLACEMENT, "/send use targetChatId")
-    text = apply_regex(text, SEND_MEDIA_TIMEOUT_PATTERN, SEND_MEDIA_TIMEOUT_REPLACEMENT, "/send-media use targetChatId")
-    text = apply_regex(text, SEND_SUCCESS_PATTERN, SEND_SUCCESS_REPLACEMENT, "/send audit logging")
+    # Part 2: Patch /send endpoint
+    text = apply_regex(text, SEND_DESTRUCTURE_PATTERN, SEND_DESTRUCTURE_REPLACEMENT, "/send destructuring")
+    text = apply_regex(text, SEND_VALIDATION_PATTERN, SEND_VALIDATION_REPLACEMENT, "/send validation")
+    text = apply_regex(text, SEND_CALL_PATTERN, SEND_CALL_REPLACEMENT, "/send use validatedChatId")
+    text = apply_regex(text, SEND_SUCCESS_PATTERN, SEND_SUCCESS_REPLACEMENT, "/send success audit")
+    text = apply_regex(text, SEND_ERROR_PATTERN, SEND_ERROR_REPLACEMENT, "/send error audit")
+
+    # Part 3: Patch /send-media endpoint
+    text = apply_regex(text, SEND_MEDIA_DESTRUCTURE_PATTERN, SEND_MEDIA_DESTRUCTURE_REPLACEMENT, "/send-media destructuring")
+    text = apply_regex(text, SEND_MEDIA_VALIDATION_PATTERN, SEND_MEDIA_VALIDATION_REPLACEMENT, "/send-media validation")
+    text = apply_regex(text, SEND_MEDIA_SEND_PATTERN, SEND_MEDIA_SEND_REPLACEMENT, "/send-media use validatedChatId")
+    text = apply_regex(text, SEND_MEDIA_SUCCESS_PATTERN, SEND_MEDIA_SUCCESS_REPLACEMENT, "/send-media success audit")
+    text = apply_regex(text, SEND_MEDIA_ERROR_PATTERN, SEND_MEDIA_ERROR_REPLACEMENT, "/send-media error audit")
 
     BRIDGE_JS.write_text(text)
     print("  WhatsApp outbound allowlist + normalization patch applied.")
