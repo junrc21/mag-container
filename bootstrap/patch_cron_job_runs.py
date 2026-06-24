@@ -22,12 +22,25 @@ Idempotent + fail-loud (mirrors the other bootstrap patches).
 
 import os
 import pathlib
+import re
 
 SCHEDULER_PY = pathlib.Path(
     os.getenv("CRON_SCHEDULER_PY", "/opt/hermes/cron/scheduler.py")
 )
 
 MARKER = "MAG: cron run history"
+
+# Helper function for regex-based replacement (more robust than exact string match)
+def replace_regex(text: str, pattern: str, replacement: str, label: str) -> str:
+    """Replace using regex for more flexible matching."""
+    if re.search(pattern, text):
+        if re.search(re.escape(replacement), text):
+            print(f"  [skip] {label}: already patched")
+            return text
+        print(f"  [ok]   {label}")
+        return re.sub(pattern, replacement, text, count=1)
+    print(f"  [skip] {label}: pattern not found")
+    return text
 
 # 1) Module-level helper, inserted right before `def tick(`.
 ANCHOR_TICK = (
@@ -151,18 +164,32 @@ def main() -> None:
     if ANCHOR_TICK not in text:
         raise SystemExit("patch_cron_job_runs: `def tick(...)` anchor missing (Hermes changed).")
     text = text.replace(ANCHOR_TICK, HELPER + ANCHOR_TICK, 1)
+
+    # Use regex for start anchor (more flexible)
     if OLD_START_RUN_ONE in text:
         text = text.replace(OLD_START_RUN_ONE, NEW_START_RUN_ONE, 1)
     elif OLD_START_PROCESS in text:
         text = text.replace(OLD_START_PROCESS, NEW_START_PROCESS, 1)
     else:
         raise SystemExit("patch_cron_job_runs: no supported start anchor found (Hermes changed).")
-    if OLD_MARK_SUCCESS not in text:
+
+    # Use regex for mark anchors (handles whitespace variations)
+    # Pattern for OLD_MARK_SUCCESS: find the mark_job_run line in success path
+    OLD_MARK_SUCCESS_PATTERN = r'mark_job_run\(job\["id"\],\s*success,\s*error,\s*delivery_error=delivery_error\)\s+return True'
+    NEW_MARK_SUCCESS_REPL = r'mark_job_run(job["id"], success, error, delivery_error=delivery_error)\n        _mag_report_job_run(job, success, error, delivery_error, _mag_run_started_at, final_response)  # MAG: cron run history\n        return True'
+
+    if not re.search(OLD_MARK_SUCCESS_PATTERN, text, re.MULTILINE):
         raise SystemExit("patch_cron_job_runs: success mark anchor missing (Hermes changed).")
-    if OLD_MARK_EXCEPT not in text:
+    text = replace_regex(text, OLD_MARK_SUCCESS_PATTERN, NEW_MARK_SUCCESS_REPL, "success mark anchor")
+
+    # Pattern for OLD_MARK_EXCEPT: find the mark_job_run line in exception path
+    OLD_MARK_EXCEPT_PATTERN = r'mark_job_run\(job\["id"\],\s*False,\s*str\(e\)\)\s+return False'
+    NEW_MARK_EXCEPT_REPL = r'mark_job_run(job["id"], False, str(e))\n        _mag_report_job_run(job, False, str(e), None, _mag_run_started_at, None)  # MAG: cron run history\n        return False'
+
+    if not re.search(OLD_MARK_EXCEPT_PATTERN, text, re.MULTILINE):
         raise SystemExit("patch_cron_job_runs: exception mark anchor missing (Hermes changed).")
-    text = text.replace(OLD_MARK_SUCCESS, NEW_MARK_SUCCESS, 1)
-    text = text.replace(OLD_MARK_EXCEPT, NEW_MARK_EXCEPT, 1)
+    text = replace_regex(text, OLD_MARK_EXCEPT_PATTERN, NEW_MARK_EXCEPT_REPL, "exception mark anchor")
+
     SCHEDULER_PY.write_text(text)
     print("OK: patched cron scheduler with per-run history reporting")
 
