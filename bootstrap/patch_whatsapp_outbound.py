@@ -151,12 +151,14 @@ function validateAndPrepareDestination(chatId, confirmedByUser = false) {
 }
 """
 
-# Anchor: insert after the monkey-patch setup (already added by jid normalization patch)
-OLD_AFTER_NORMALIZE = "console.log('[MAG] Patched Baileys jidDecode with safe wrapper');"
-NEW_AFTER_NORMALIZE = (
-    "console.log('[MAG] Patched Baileys jidDecode with safe wrapper');"
-    + OUTBOUND_FUNCS
-)
+# Anchor: insert after the allowlist import (comes after the monkey-patch setup)
+# We can't insert between try/catch and the next import (invalid JS - imports must be at top)
+OLD_AFTER_NORMALIZE = """import { matchesAllowedUser, parseAllowedUsers } from './allowlist.js';
+
+// Parse CLI args"""
+NEW_AFTER_NORMALIZE = """import { matchesAllowedUser, parseAllowedUsers } from './allowlist.js';
+""" + OUTBOUND_FUNCS + """
+// Parse CLI args"""
 
 
 # ============================================================================
