@@ -14,9 +14,13 @@
 //   - Audit logging
 //
 // This MCP is a thin wrapper that:
-//   1. Validates the confirmed_by_user flag
+//   1. Validates the confirmed_by_user flag (fail-fast if not true)
 //   2. Calls the bridge /send endpoint
 //   3. Returns the result
+//
+// NOTE: confirmed_by_user validation is fail-fast at the MCP layer to ensure
+// the AI gets immediate feedback. Trusted runtime sends (replies, cron) use
+// system_authorized=true instead, bypassing this MCP.
 //
 // Required env (set by Hermes via mcp_servers.whatsapp-outbound.env):
 //   WHATSAPP_BRIDGE_PORT  Port of the WhatsApp bridge (default: 3000)
@@ -121,12 +125,18 @@ async function handleToolsCall(id, params) {
     return replyError(id, -32602, 'message is required and must be a string');
   }
 
-  // Note: confirmed_by_user is required for proactive messaging.
-  // The bridge will validate this - we pass it through to allow Hermes fallback
-  // to work if the first attempt fails.
+  // NOTE: confirmed_by_user is REQUIRED for proactive messaging.
+  // We fail-fast here with a clear error instead of passing to the bridge.
+  // This ensures the AI gets immediate feedback and can correct its call.
+  // Trusted runtime-originated sends (replies, cron) use system_authorized instead.
   if (!confirmed_by_user || confirmed_by_user !== true) {
-    // Allow the call to proceed - the bridge will validate and provide clear error
-    log(`Warning: confirmed_by_user is ${confirmed_by_user} - bridge will validate`);
+    log(`Error: confirmed_by_user is ${confirmed_by_user} - rejecting proactive send`);
+    return replyError(
+      id,
+      -32602,
+      'confirmed_by_user must be true for proactive messaging. ' +
+      'Example: send_whatsapp_message(phone_number="5511999999999", message="Hello", confirmed_by_user=true)'
+    );
   }
 
   // Strip non-digit chars for the bridge (it will normalize further)
