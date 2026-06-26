@@ -166,6 +166,14 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_jid_norma
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_outbound.py /opt/hermes/bootstrap/patch_whatsapp_outbound.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_outbound.py
 
+# WhatsApp runtime authorization: preserve the proactive outbound guard while
+# allowing trusted runtime-originated sends (same-chat replies and cron deliveries)
+# to carry an internal system_authorized marker through the adapter/standalone path.
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_adapter_auth.py /opt/hermes/bootstrap/patch_whatsapp_adapter_auth.py
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_cron_auth.py /opt/hermes/bootstrap/patch_whatsapp_cron_auth.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_adapter_auth.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_cron_auth.py
+
 # Bake the WhatsApp bridge deps (Baileys) into the image. Otherwise the bridge runs a
 # slow/fragile ~3-min `npm install` on the FIRST pairing at runtime — which looks like
 # "the QR never generates". Baking it means the first QR is instant for every tenant.

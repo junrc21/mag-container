@@ -25,6 +25,7 @@ This patch adds:
 6. Confirmation requirement flag
    - send_whatsapp_message tool must pass confirmed_by_user=true
    - Bridge validates this flag before sending
+   - Trusted runtime-originated sends may pass system_authorized=true instead
 
 NOTE: This patch requires patch_whatsapp_jid_normalization.py to run first
       (it depends on the normalizeWhatsAppJid function being present).
@@ -132,9 +133,14 @@ function auditOutboundSend(originalChatId, normalizedChatId, result, error = nul
 }
 
 // _mag_whatsapp_outbound: validate and normalize destination for sending
-function validateAndPrepareDestination(chatId, confirmedByUser = false) {
+function validateAndPrepareDestination(chatId, confirmedByUser = false, systemAuthorized = false) {
   const original = chatId;
   const normalized = normalizeWhatsAppJid(chatId);
+
+  if (systemAuthorized === true) {
+    auditOutboundSend(original, normalized, 'authorized_runtime');
+    return normalized;
+  }
 
   // Require explicit confirmation for proactive messaging
   if (confirmedByUser !== true) {
@@ -167,14 +173,14 @@ NEW_AFTER_NORMALIZE = """import { matchesAllowedUser, parseAllowedUsers } from '
 
 # Step 1: Add confirmed_by_user to destructuring (keep replyTo)
 SEND_DESTRUCTURE_OLD = """  const { chatId, message, replyTo } = req.body;"""
-SEND_DESTRUCTURE_NEW = """  const { chatId, message, replyTo, confirmed_by_user } = req.body;"""
+SEND_DESTRUCTURE_NEW = """  const { chatId, message, replyTo, confirmed_by_user, system_authorized } = req.body;"""
 
 # Step 1.5: Add validation inside the try block
 SEND_VALIDATION_OLD = """  try {
     const chunks = splitLongMessage(formatOutgoingMessage(message));"""
 SEND_VALIDATION_NEW = """  try {
     // _mag_whatsapp_outbound: validate destination and allowlist
-    const validatedChatId = validateAndPrepareDestination(chatId, confirmed_by_user);
+    const validatedChatId = validateAndPrepareDestination(chatId, confirmed_by_user, system_authorized);
     const chunks = splitLongMessage(formatOutgoingMessage(message));"""
 
 # Step 2: Replace chatId with validatedChatId in sendWithTimeout call
@@ -215,13 +221,13 @@ SEND_ERROR_NEW = """  } catch (err) {
 #   const { chatId, filePath, mediaType, caption, fileName } = req.body;
 
 SEND_MEDIA_DESTRUCTURE_OLD = """  const { chatId, filePath, mediaType, caption, fileName } = req.body;"""
-SEND_MEDIA_DESTRUCTURE_NEW = """  const { chatId, filePath, mediaType, caption, fileName, confirmed_by_user } = req.body;"""
+SEND_MEDIA_DESTRUCTURE_NEW = """  const { chatId, filePath, mediaType, caption, fileName, confirmed_by_user, system_authorized } = req.body;"""
 
 SEND_MEDIA_VALIDATION_OLD = """  try {
     if (!existsSync(filePath)) {"""
 SEND_MEDIA_VALIDATION_NEW = """  try {
     // _mag_whatsapp_outbound: validate destination and allowlist
-    const validatedChatId = validateAndPrepareDestination(chatId, confirmed_by_user);
+    const validatedChatId = validateAndPrepareDestination(chatId, confirmed_by_user, system_authorized);
     if (!existsSync(filePath)) {"""
 
 # Replace chatId with validatedChatId in sendMessage call
