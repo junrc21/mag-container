@@ -166,6 +166,12 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_jid_norma
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_outbound.py /opt/hermes/bootstrap/patch_whatsapp_outbound.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_outbound.py
 
+# WhatsApp LID allowlist reconciliation: keep the bridge-side LID<->phone mapping
+# compatible across both forward and reverse file formats so inbound allowlists
+# keep working when WhatsApp delivers users as @lid identifiers.
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_lid_allowlist.py /opt/hermes/bootstrap/patch_whatsapp_lid_allowlist.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_lid_allowlist.py
+
 # WhatsApp runtime authorization: preserve the proactive outbound guard while
 # allowing trusted runtime-originated sends (same-chat replies and cron deliveries)
 # to carry an internal system_authorized marker through the adapter/standalone path.

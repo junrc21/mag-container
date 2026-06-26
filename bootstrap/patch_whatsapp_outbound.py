@@ -5,17 +5,20 @@ This patch adds:
 1. WHATSAPP_OUTBOUND_ALLOWED_USERS - separate allowlist for explicit proactive messages
    (distinct from WHATSAPP_ALLOWED_USERS which is for inbound)
 
-2. IMPLICIT AUTHORIZATION: Numbers in WHATSAPP_ALLOWED_USERS (inbound) are automatically
-   allowed for outbound. This means if someone can message the AI, the AI can message them
-   back - enabling natural conversation flows like "send me a reminder tomorrow".
+2. IMPLICIT AUTHORIZATION: Explicit numbers in WHATSAPP_ALLOWED_USERS (inbound) may be
+   reused for outbound only when no separate outbound policy exists. This preserves
+   natural "message me back later" flows without letting an inbound wildcard open
+   proactive outbound to everyone.
 
 3. JID normalization in all outbound endpoints (/send, /edit, /send-media)
    - Accepts raw numbers, numbers with +, numbers without suffix, and groups
    - Converts to proper @s.whatsapp.net or @g.us format
 
 4. Outbound allowlist validation
-   - Checks both WHATSAPP_OUTBOUND_ALLOWED_USERS AND WHATSAPP_ALLOWED_USERS
-   - Deny-by-default: if both lists are empty, no outbound sends allowed
+   - WHATSAPP_OUTBOUND_ALLOWED_USERS is authoritative when set
+   - Falls back to explicit inbound numbers only when no outbound policy exists
+   - Inbound wildcard (*) never grants proactive outbound by itself
+   - Deny-by-default: if no explicit outbound or inbound numbers match, deny
    - Supports phone number matching (handles various formats)
 
 5. Audit logging for all send attempts
@@ -85,10 +88,10 @@ function parseOutboundAllowedUsers() {
 }
 
 // _mag_whatsapp_outbound: check if destination is in outbound allowlist
-// Allows outbound to numbers that EITHER:
-// 1. Are in WHATSAPP_OUTBOUND_ALLOWED_USERS (explicit outbound allowlist), OR
-// 2. Are in WHATSAPP_ALLOWED_USERS (inbound allowlist - implicit authorization)
-// This means if someone can message the AI, the AI can message them back.
+// Allows outbound using this precedence:
+// 1. WHATSAPP_OUTBOUND_ALLOWED_USERS is authoritative when configured
+// 2. Otherwise, explicit inbound numbers may be reused for outbound
+// 3. Inbound wildcard (*) NEVER opens proactive outbound by itself
 function isOutboundAllowed(chatId) {
   const outboundAllowed = parseOutboundAllowedUsers();
   const inboundAllowed = (process.env.WHATSAPP_ALLOWED_USERS || '').split(',')
@@ -98,10 +101,10 @@ function isOutboundAllowed(chatId) {
   const digits = normalized.replace(/\\D/g, '');
 
   // Helper to check if a number is in a list (handles various formats)
-  const isInList = (list, targetDigits) => {
+  const isInList = (list, targetDigits, { allowWildcard = false } = {}) => {
     if (list.length === 0) return false;
     // Check for wildcard (allows all)
-    if (list.includes('*')) return true;
+    if (allowWildcard && list.includes('*')) return true;
     // Check direct match (with or without suffix)
     if (list.some(a => normalizeWhatsAppJid(a) === normalized)) return true;
     // Check by phone digits only
@@ -110,12 +113,15 @@ function isOutboundAllowed(chatId) {
     return false;
   };
 
-  // Check explicit outbound allowlist
-  if (isInList(outboundAllowed, digits)) return true;
+  // Explicit outbound policy wins. Its wildcard is intentional.
+  if (outboundAllowed.length > 0) {
+    return isInList(outboundAllowed, digits, { allowWildcard: true });
+  }
 
-  // Check implicit authorization via inbound allowlist
-  // (if someone can message the AI, the AI can message them back)
-  if (isInList(inboundAllowed, digits)) return true;
+  // No explicit outbound policy: allow only explicit inbound identities.
+  // Wildcard inbound access is for talking TO the AI, not for letting the AI
+  // proactively message arbitrary third parties.
+  if (isInList(inboundAllowed.filter(value => value !== '*'), digits)) return true;
 
   return false;
 }
