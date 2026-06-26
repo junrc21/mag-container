@@ -1,16 +1,14 @@
 """Build-time patch: mark trusted WhatsApp runtime sends as internally authorized.
 
-The bridge outbound guard must stay strict for truly proactive sends
-(`send_whatsapp_message` to an arbitrary number), but the runtime itself also
-uses the same `/send` and `/send-media` endpoints for two safe cases:
+The bridge outbound guard distinguishes between:
+1. Trusted runtime-originated sends (replies, cron) - use system_authorized=true
+2. Proactive outbound sends (AI-initiated to arbitrary numbers) - require confirmed_by_user=true
 
-1. Replies in the same active WhatsApp session/chat
-2. Cron deliveries already bound to a saved WhatsApp target
+This patch teaches gateway/platforms/whatsapp.py to:
+- Pass system_authorized=true for trusted runtime sends (replies in same session, cron)
+- Pass confirmed_by_user=true for all other sends (proactive outbound)
 
-This patch teaches `gateway/platforms/whatsapp.py` to pass an internal
-`system_authorized=true` flag only for those trusted runtime-originated sends.
-The bridge still enforces explicit `confirmed_by_user=true` for genuine
-proactive outbound requests.
+The bridge validates both flags and enforces allowlist checking for proactive sends.
 
 Idempotent + fail-loud.
 """
@@ -112,6 +110,9 @@ SEND_PAYLOAD_NEW = """            runtime_authorized = _mag_is_runtime_authorize
                 }
                 if runtime_authorized:
                     payload["system_authorized"] = True
+                else:
+                    # Proactive sends require explicit user confirmation
+                    payload["confirmed_by_user"] = True
                 if reply_to and last_message_id is None:
                     # Only reply-to on the first chunk
                     payload["replyTo"] = reply_to
@@ -153,6 +154,9 @@ MEDIA_PAYLOAD_NEW = """            payload: Dict[str, Any] = {
             }
             if _mag_is_runtime_authorized_whatsapp_send(chat_id, metadata):
                 payload["system_authorized"] = True
+            else:
+                # Proactive sends require explicit user confirmation
+                payload["confirmed_by_user"] = True
             if caption:
 """
 
