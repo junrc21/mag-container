@@ -100,6 +100,8 @@ function isOutboundAllowed(chatId) {
   // Helper to check if a number is in a list (handles various formats)
   const isInList = (list, targetDigits) => {
     if (list.length === 0) return false;
+    // Check for wildcard (allows all)
+    if (list.includes('*')) return true;
     // Check direct match (with or without suffix)
     if (list.some(a => normalizeWhatsAppJid(a) === normalized)) return true;
     // Check by phone digits only
