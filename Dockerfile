@@ -185,7 +185,14 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_live_repl
 # Bake the WhatsApp bridge deps (Baileys) into the image. Otherwise the bridge runs a
 # slow/fragile ~3-min `npm install` on the FIRST pairing at runtime — which looks like
 # "the QR never generates". Baking it means the first QR is instant for every tenant.
-RUN cd /opt/hermes/scripts/whatsapp-bridge && npm install --no-audit --no-fund \
+# GH Actions has sporadic arm64 registry resets while resolving Baileys' transitive git
+# deps; bump npm fetch retries/timeouts so a transient network blip doesn't fail publish.
+RUN cd /opt/hermes/scripts/whatsapp-bridge \
+    && npm install --no-audit --no-fund \
+        --fetch-retries=5 \
+        --fetch-retry-factor=2 \
+        --fetch-retry-mintimeout=20000 \
+        --fetch-retry-maxtimeout=120000 \
     && chown -R hermes:hermes node_modules
 
 # WhatsApp web pairing: a self-contained pairing module + 4 thin gateway routes
