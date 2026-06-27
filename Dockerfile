@@ -177,8 +177,10 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_lid_allow
 # to carry an internal system_authorized marker through the adapter/standalone path.
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_adapter_auth.py /opt/hermes/bootstrap/patch_whatsapp_adapter_auth.py
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_cron_auth.py /opt/hermes/bootstrap/patch_whatsapp_cron_auth.py
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_live_reply_auth.py /opt/hermes/bootstrap/patch_whatsapp_live_reply_auth.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_adapter_auth.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_cron_auth.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_live_reply_auth.py
 
 # Bake the WhatsApp bridge deps (Baileys) into the image. Otherwise the bridge runs a
 # slow/fragile ~3-min `npm install` on the FIRST pairing at runtime — which looks like
