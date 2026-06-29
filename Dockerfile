@@ -152,6 +152,16 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_boot_deps
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_jid_normalization.py /opt/hermes/bootstrap/patch_whatsapp_jid_normalization.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_jid_normalization.py
 
+# WhatsApp outbound proativo: adiciona POST /send ao bridge com guard de allowlist.
+# Deve rodar APÓS patch_whatsapp_jid_normalization (usa normalizeWhatsAppJid).
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_outbound.py /opt/hermes/bootstrap/patch_whatsapp_outbound.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_outbound.py
+
+# MCP server whatsapp-outbound (stdio, zero-dependency Node). Expõe send_whatsapp_message
+# ao agente para envio proativo de mensagens a contatos autorizados.
+RUN mkdir -p /opt/mag/whatsapp-outbound-mcp && chown -R hermes:hermes /opt/mag
+COPY --chown=hermes:hermes mcp/whatsapp-outbound/server.mjs /opt/mag/whatsapp-outbound-mcp/server.mjs
+
 # Bake the WhatsApp bridge deps (Baileys) into the image. Otherwise the bridge runs a
 # slow/fragile ~3-min `npm install` on the FIRST pairing at runtime — which looks like
 # "the QR never generates". Baking it means the first QR is instant for every tenant.
