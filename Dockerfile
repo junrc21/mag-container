@@ -157,6 +157,12 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_jid_norma
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_outbound.py /opt/hermes/bootstrap/patch_whatsapp_outbound.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_outbound.py
 
+# ACK-wait: faz o /send aguardar confirmação do servidor WA antes de retornar sucesso.
+# Sem isso, erros como 463 (RESTRICT_ALL_COMPANIONS) chegam de forma assíncrona e o
+# agente nunca sabe que a mensagem foi rejeitada. Deve rodar APÓS patch_whatsapp_outbound.
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_ack_check.py /opt/hermes/bootstrap/patch_whatsapp_ack_check.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_ack_check.py
+
 # MCP server whatsapp-outbound (stdio, zero-dependency Node). Expõe send_whatsapp_message
 # ao agente para envio proativo de mensagens a contatos autorizados.
 RUN mkdir -p /opt/mag/whatsapp-outbound-mcp && chown -R hermes:hermes /opt/mag
@@ -205,16 +211,21 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_authz_blocklist.py
 # (verified: open + snapshot work). It lives in the image — NOT under /opt/data (the
 # per-tenant volume) — so it's found at runtime regardless of HOME. The `browser`
 # toolset is gated per plan (enabled only for enterprise/Diretora).
-RUN apt-get update && apt-get install -y --no-install-recommends chromium \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    chromium \
+    tesseract-ocr \
+    tesseract-ocr-por \
     && rm -rf /var/lib/apt/lists/*
 
 # PDF reading: pymupdf + pymupdf4llm for the ocr-and-documents skill.
 # Without these, the agent gets ModuleNotFoundError when trying to read
 # user-uploaded PDFs and falls back to claiming "needs selectable text".
 # Chromium (above) covers PDF generation via --headless --print-to-pdf.
+# pytesseract + tesseract-ocr (above) enable OCR on scanned/image-only PDFs
+# via pymupdf's page.get_textpage_ocr() — returns empty string without it.
 RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install \
     --python /opt/hermes/.venv/bin/python3 \
-    pymupdf pymupdf4llm
+    pymupdf pymupdf4llm pytesseract
 
 # MAG-bundled skills seeded into the tenant volume by entrypoint.sh.
 # Skills live at runtime under /opt/data/skills/ (the tenant volume).
