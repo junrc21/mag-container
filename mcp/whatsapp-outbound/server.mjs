@@ -113,9 +113,13 @@ async function callTool(name, args) {
     );
   }
 
-  log(`Sending to ${digits} (from "${phone_number}"): ${message.slice(0, 60)}`);
+  // Baileys requer JID completo com sufixo — dígitos puros causam jidDecode crash.
+  // Grupos têm 17+ dígitos → @g.us; DMs → @s.whatsapp.net.
+  const jid = digits.length >= 17 ? `${digits}@g.us` : `${digits}@s.whatsapp.net`;
 
-  const result = await bridgeSend(digits, message);
+  log(`Sending to ${jid} (from "${phone_number}"): ${message.slice(0, 60)}`);
+
+  const result = await bridgeSend(jid, message);
 
   log(`OK — messageId: ${result.messageId ?? '(sem id)'}`);
   return `Mensagem enviada com sucesso para ${phone_number}.` +
