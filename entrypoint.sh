@@ -154,6 +154,18 @@ if [ ! -f "$HOME/soul.md" ] && [ -f /opt/hermes/bootstrap/soul.md ]; then
   cp /opt/hermes/bootstrap/soul.md "$HOME/soul.md"
 fi
 
+# Seed MAG-bundled skills into the tenant's skills directory (never overwrite).
+# Skills at /opt/hermes/bootstrap/skills/ are copied to ~/skills/ on first boot.
+_mag_seed_skill() {
+  _src="/opt/hermes/bootstrap/skills/$1"
+  _dst="$HOME/skills/$1"
+  [ -d "$_src" ] || return 0
+  [ -d "$_dst" ] && return 0
+  mkdir -p "$(dirname "$_dst")"
+  cp -R "$_src" "$_dst"
+}
+_mag_seed_skill "productivity/pdf-generation"
+
 # Auto-install ByteRover CLI into the persistent volume if missing.
 # Default: enabled (set BRV_AUTO_INSTALL=0 to disable).
 if [ "${BRV_AUTO_INSTALL:-1}" = "1" ] && [ ! -x "${BRV_CLIENT_BIN}" ]; then

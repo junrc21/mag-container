@@ -235,6 +235,22 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_authz_blocklist.py
 RUN apt-get update && apt-get install -y --no-install-recommends chromium \
     && rm -rf /var/lib/apt/lists/*
 
+# PDF reading: pymupdf + pymupdf4llm for the ocr-and-documents skill.
+# Without these, the agent gets ModuleNotFoundError when trying to read
+# user-uploaded PDFs and falls back to claiming "needs selectable text".
+# Chromium (above) covers PDF generation via --headless --print-to-pdf.
+RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install \
+    --python /opt/hermes/.venv/bin/python3 \
+    pymupdf pymupdf4llm
+
+# MAG-bundled skills seeded into the tenant volume by entrypoint.sh.
+# Skills live at runtime under /opt/data/skills/ (the tenant volume).
+# Storing them here avoids losing them on image rebuild while keeping
+# the seeding idempotent (entrypoint never overwrites existing skills).
+RUN mkdir -p /opt/hermes/bootstrap/skills/productivity/pdf-generation
+COPY --chown=hermes:hermes bootstrap/skills/productivity/pdf-generation/SKILL.md \
+    /opt/hermes/bootstrap/skills/productivity/pdf-generation/SKILL.md
+
 # Timezone: the whole platform runs on Brasília time. HERMES_TIMEZONE is read by
 # hermes_time.now() (the clock behind cron schedules + delivery), TZ covers OS-level
 # time. tzdata in the venv guarantees ZoneInfo("America/Sao_Paulo") resolves even if
