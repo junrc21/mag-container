@@ -1,7 +1,7 @@
 ---
 name: ocr-and-documents
 description: "Extract text and images from PDFs/scans (pymupdf, tesseract OCR). Includes embedded image extraction and PDF reconstruction with images."
-version: 2.4.0
+version: 2.5.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -92,10 +92,13 @@ for i, page in enumerate(doc):
 
 ---
 
-## pymupdf — Extracting Embedded Images from PDF
+## Extracting Embedded Images from PDF
 
 **Critical for PDFs with photos** (inspection reports, catalogues, presentations with images).
-This is the correct approach when a PDF has embedded photos/graphics that need to be preserved.
+
+**On client channels (WhatsApp/Telegram):** use the `extract_pdf_images` tool from the `pdf-tools` MCP — it extracts all embedded images and returns `MEDIA:<path>` lines for delivery. Do NOT use `vision_analyze` on a PDF path.
+
+**On server/CLI:** use `execute_code` with the code below.
 
 ```python
 import pymupdf
@@ -135,10 +138,34 @@ for page_num, page in enumerate(doc):
 print(f"\nTotal: {len(extracted)} images extracted to {output_dir}")
 ```
 
-**After extracting**, send each image file path to the conversation so they appear inline — the platform will display them. Example:
+**After extracting**, output each image using the `MEDIA:` tag so the platform delivers them as real image messages. This is MANDATORY — just printing the path does nothing.
 ```python
 for img in extracted:
-    print(img["path"])  # platform shows the image inline
+    print(f"MEDIA:{img['path']}")  # delivers the image as a message attachment
+```
+
+Complete extraction + delivery in a single `execute_code` block:
+```python
+import pymupdf, os
+
+doc = pymupdf.open("/opt/data/cache/documents/doc_XXXX.pdf")  # use the actual cached path
+output_dir = "/opt/data/workspace/pdf_images"
+os.makedirs(output_dir, exist_ok=True)
+extracted = []
+for page_num, page in enumerate(doc):
+    for img_index, img in enumerate(page.get_images(full=True)):
+        xref = img[0]
+        base_image = doc.extract_image(xref)
+        ext = base_image["ext"]
+        filepath = os.path.join(output_dir, f"page{page_num+1}_img{img_index+1}.{ext}")
+        with open(filepath, "wb") as f:
+            f.write(base_image["image"])
+        extracted.append(filepath)
+        print(f"  Saved: {filepath} ({base_image['width']}x{base_image['height']})")
+
+print(f"\nTotal: {len(extracted)} images")
+for path in extracted:
+    print(f"MEDIA:{path}")  # each MEDIA: line delivers one image to the chat
 ```
 
 ---
@@ -229,7 +256,9 @@ for i, page in enumerate(doc):
 - `web_extract` is always first choice for URLs
 - pymupdf is the safe default — instant, no models, works everywhere
 - **If `page.get_text()` returns empty → the PDF is scanned → use `get_textpage_ocr()`**
-- **If the PDF has photos/images → use `page.get_images()` + `doc.extract_image()` to get them**
+- **If the PDF has photos/images → use `page.get_images()` + `doc.extract_image()` to get them, then `MEDIA:<path>` to deliver each one**
+- **NEVER use `vision_analyze` on a PDF path** — it only accepts real image files (jpg/png), not PDFs
+- **MEDIA: tag is mandatory** for platform delivery; `print(path)` alone sends nothing to the user
 - marker-pdf is for complex layouts, equations — install only when needed (~3-5GB)
 - For Word docs: `pip install python-docx`
 - For PowerPoint: see the `powerpoint` skill

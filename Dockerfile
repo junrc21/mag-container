@@ -168,6 +168,12 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_ack_check
 RUN mkdir -p /opt/mag/whatsapp-outbound-mcp && chown -R hermes:hermes /opt/mag
 COPY --chown=hermes:hermes mcp/whatsapp-outbound/server.mjs /opt/mag/whatsapp-outbound-mcp/server.mjs
 
+# MCP server pdf-tools (stdio, Python + pymupdf). Expõe extract_pdf_images ao agente
+# para extrair imagens embutidas de PDFs — necessário porque execute_code está desabilitado
+# em canais cliente (WhatsApp/Telegram).
+RUN mkdir -p /opt/mag/pdf-tools-mcp && chown -R hermes:hermes /opt/mag/pdf-tools-mcp
+COPY --chown=hermes:hermes mcp/pdf-tools/server.py /opt/mag/pdf-tools-mcp/server.py
+
 # Bake the WhatsApp bridge deps (Baileys) into the image. Otherwise the bridge runs a
 # slow/fragile ~3-min `npm install` on the FIRST pairing at runtime — which looks like
 # "the QR never generates". Baking it means the first QR is instant for every tenant.
