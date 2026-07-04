@@ -165,6 +165,7 @@ _mag_seed_skill() {
   cp -R "$_src" "$_dst"
 }
 _mag_seed_skill "productivity/pdf-generation"
+_mag_seed_skill "productivity/ocr-and-documents"
 
 # Auto-install ByteRover CLI into the persistent volume if missing.
 # Default: enabled (set BRV_AUTO_INSTALL=0 to disable).

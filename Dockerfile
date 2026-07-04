@@ -231,9 +231,16 @@ RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install \
 # Skills live at runtime under /opt/data/skills/ (the tenant volume).
 # Storing them here avoids losing them on image rebuild while keeping
 # the seeding idempotent (entrypoint never overwrites existing skills).
-RUN mkdir -p /opt/hermes/bootstrap/skills/productivity/pdf-generation
+RUN mkdir -p /opt/hermes/bootstrap/skills/productivity/pdf-generation \
+             /opt/hermes/bootstrap/skills/productivity/ocr-and-documents
 COPY --chown=hermes:hermes bootstrap/skills/productivity/pdf-generation/SKILL.md \
     /opt/hermes/bootstrap/skills/productivity/pdf-generation/SKILL.md
+# Override the default ocr-and-documents skill with MAG's version that includes:
+# - embedded image extraction (page.get_images + doc.extract_image)
+# - tesseract OCR via get_textpage_ocr() (tesseract-ocr installed above)
+# - PDF reconstruction preserving original photos
+COPY --chown=hermes:hermes bootstrap/skills/productivity/ocr-and-documents/SKILL.md \
+    /opt/hermes/bootstrap/skills/productivity/ocr-and-documents/SKILL.md
 
 # Timezone: the whole platform runs on Brasília time. HERMES_TIMEZONE is read by
 # hermes_time.now() (the clock behind cron schedules + delivery), TZ covers OS-level
