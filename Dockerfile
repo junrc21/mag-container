@@ -23,6 +23,8 @@ COPY --chown=hermes:hermes bootstrap/patch_approval_async.py /opt/hermes/bootstr
 COPY --chown=hermes:hermes bootstrap/patch_channel_noise_suppress.py /opt/hermes/bootstrap/patch_channel_noise_suppress.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_commands.py /opt/hermes/bootstrap/patch_disable_channel_commands.py
 COPY --chown=hermes:hermes bootstrap/patch_usage_tokens.py /opt/hermes/bootstrap/patch_usage_tokens.py
+COPY --chown=hermes:hermes bootstrap/patch_aux_usage_ledger.py /opt/hermes/bootstrap/patch_aux_usage_ledger.py
+COPY --chown=hermes:hermes bootstrap/mag_turn_ledger.py /opt/hermes/agent/mag_turn_ledger.py
 COPY --chown=hermes:hermes bootstrap/patch_toolsets_used.py /opt/hermes/bootstrap/patch_toolsets_used.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
 COPY --chown=hermes:hermes bootstrap/patch_forbidden_topics_gate.py /opt/hermes/bootstrap/patch_forbidden_topics_gate.py
@@ -98,6 +100,12 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_disable_channel_co
 # Usage metering: include per-turn token usage (tokens/cost/model) in the agent:end
 # hook so the control plane can record real LLM cost per turn. See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_usage_tokens.py
+
+# Auxiliary (vision/compression/web_extract/...) usage ledger: capture per-call
+# model+tokens for auxiliary LLM calls (which use separate models like gpt-4o)
+# so the control plane meters them against the REAL model instead of losing
+# them. Depends on mag_turn_ledger.py (COPY'd to /opt/hermes/agent/). See header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_aux_usage_ledger.py
 
 # Per-tool credits: report the toolsets a turn used in agent:end, so the control
 # plane can bill credits weighted by tool complexity. See script header.
