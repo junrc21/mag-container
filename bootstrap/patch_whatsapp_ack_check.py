@@ -10,12 +10,12 @@ Fix (3 parts):
      error-ACK log calls (logger.warn({id, error}, 'received error in ack')).
   2. Inject a sock.ev.on('messages.update', ...) listener inside startSocket() as a
      belt-and-suspenders fallback for status=0 (ERROR) delivery receipts.
-  3. In the /send route, await a Promise that resolves after _MAG_ACK_WAIT_MS ms (assume
-     success if no error arrives) or rejects immediately if an error is detected. The
-     rejection is returned as HTTP 500 to the MCP caller → agent gets the real error.
+  3. In the /send route, await a Promise ONLY when confirmed_by_user===true (proactive
+     outbound from the MCP server). Gateway replies go through /send too — the ACK-wait
+     must NOT apply to them or every agent reply is delayed by 8 seconds unnecessarily.
 
-Tuning: set WHATSAPP_ACK_WAIT_MS env var (default 3000 ms). High enough to catch the
-immediate rejection from WA for error 463; low enough not to slow down normal sends.
+Tuning: set WHATSAPP_ACK_WAIT_MS env var (default 8000 ms). Long enough to catch error
+463 RESTRICT_ALL_COMPANIONS which arrives asynchronously from the WA server.
 """
 
 import os
@@ -38,7 +38,7 @@ NEW_LOGGER = """\
 // We parse every pino log line written to stdout and, when we spot an {id, error} pair,
 // immediately reject the in-flight Promise registered by /send for that messageId.
 const _magPendingOutbound = new Map();
-const _MAG_ACK_WAIT_MS = parseInt(process.env.WHATSAPP_ACK_WAIT_MS || '3000', 10);
+const _MAG_ACK_WAIT_MS = parseInt(process.env.WHATSAPP_ACK_WAIT_MS || '8000', 10);
 const _magPinoStream = {
   write(data) {
     process.stdout.write(data);
@@ -105,12 +105,12 @@ OLD_SEND_RESP = """\
 // Edit a previously sent message"""
 
 NEW_SEND_RESP = """\
-    // _mag_ack_check: wait up to _MAG_ACK_WAIT_MS for a WA server delivery error.
-    // Errors like 463 RESTRICT_ALL_COMPANIONS arrive via the pino interceptor or the
-    // messages.update listener and immediately reject this Promise; if no error arrives
-    // within the window the timeout resolves it and we return success as normal.
+    // _mag_ack_check: only apply ACK-wait for proactive outbound (confirmed_by_user===true).
+    // Gateway replies also use /send — without this guard every agent reply would be delayed 8s.
+    // Errors like 463 arrive via the pino interceptor or messages.update; no error within
+    // the window resolves the Promise and we return success.
     const _magLastId = messageIds[messageIds.length - 1];
-    if (_magLastId) {
+    if (_magLastId && req.body?.confirmed_by_user === true) {
       try {
         await new Promise((resolve, reject) => {
           _magPendingOutbound.set(_magLastId, { resolve, reject });
@@ -167,7 +167,7 @@ def main() -> None:
     print(f"Patching {BRIDGE_JS} ({MARKER})")
     print("  [ok]   pino stream interceptor for error-ACK detection")
     print("  [ok]   messages.update listener (belt-and-suspenders STATUS=0)")
-    print("  [ok]   /send ACK-wait (3 s window, env: WHATSAPP_ACK_WAIT_MS)")
+    print("  [ok]   /send ACK-wait (8 s window, conditional on confirmed_by_user, env: WHATSAPP_ACK_WAIT_MS)")
 
 
 if __name__ == "__main__":
