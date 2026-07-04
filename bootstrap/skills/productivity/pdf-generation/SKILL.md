@@ -70,6 +70,14 @@ echo "PDF saved: /opt/data/workspace/relatorio.pdf"
   "data:text/html,<h1>Hello</h1><p>Content here</p>" 2>/dev/null
 ```
 
+**Embedding local images in the PDF:**
+Reference image files directly with `file://` paths in `<img>` tags — do NOT try to `read_file` on them:
+```html
+<img src="file:///opt/data/workspace/pdf_images/page1_img1.jpeg" style="max-width:100%;height:auto;">
+<img src="file:///opt/data/workspace/pdf_images/page2_img1.jpeg" style="max-width:100%;height:auto;">
+```
+Chromium resolves `file://` paths at render time. No need to read the image bytes.
+
 **Notes:**
 - Always use `--no-sandbox --disable-dev-shm-usage --disable-gpu` (required in Docker)
 - Redirect stderr to `/dev/null` to hide harmless dbus/GPU errors
@@ -117,12 +125,14 @@ doc.save("/opt/data/workspace/watermarked.pdf")
 
 ## Sending the PDF to the user
 
-After generating, attach the file — the platform adapter will send it as a document:
+After generating, include a `MEDIA:` line in your reply — the platform adapter delivers it as a file attachment:
 
-```python
-# In a tool result or message, reference the file path:
-print("/opt/data/workspace/relatorio.pdf")
+```
+MEDIA:/opt/data/workspace/relatorio.pdf
 ```
 
-The agent should then use `send_file` or include the path in its response so the
-platform adapter picks it up and delivers it as an attachment.
+Example full response:
+```
+Pronto! Aqui está o relatório gerado.
+MEDIA:/opt/data/workspace/relatorio.pdf
+```
