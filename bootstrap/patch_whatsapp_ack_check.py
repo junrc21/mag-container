@@ -45,9 +45,14 @@ const _magPinoStream = {
     try {
       const str = typeof data === 'string' ? data : data.toString('utf8');
       const obj = JSON.parse(str);
-      if (obj && typeof obj.id === 'string' && typeof obj.error === 'string') {
-        const _p = _magPendingOutbound.get(obj.id);
-        if (_p) { _magPendingOutbound.delete(obj.id); _p.reject(new Error(`WA error ${obj.error}`)); }
+      // Baileys pino error format: {attrs: {id, error}, msg: 'received error in ack'}
+      const _aId = obj?.attrs?.id || obj?.id;
+      const _aErr = obj?.attrs?.error || obj?.error;
+      if (_aId && _aErr) {
+        console.log('[bridge-ack] pino error: id=' + _aId + ' error=' + _aErr);
+        const _p = _magPendingOutbound.get(_aId);
+        if (_p) { _magPendingOutbound.delete(_aId); _p.reject(new Error(`WA error ${_aErr}`)); }
+        else { console.log('[bridge-ack] late error (after window): id=' + _aId); }
       }
     } catch (_e) { /* non-JSON or wrong shape — ignore */ }
   }
