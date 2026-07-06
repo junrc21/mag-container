@@ -97,12 +97,14 @@ NEW_SOCK_CLOSE = """\
 # ── Part 3: ACK-wait in the /send route ──────────────────────────────────────
 
 OLD_SEND_RESP = """\
+    auditOutboundSend(chatId, validatedChatId, 'success');
     res.json({
       success: true,
       messageId: messageIds[messageIds.length - 1],
       messageIds,
     });
   } catch (err) {
+    auditOutboundSend(chatId, chatId, 'error', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -125,12 +127,14 @@ NEW_SEND_RESP = """\
         return res.status(500).json({ error: `Falha no envio: ${_ackErr.message}` });
       }
     }
+    auditOutboundSend(chatId, validatedChatId, 'success');
     res.json({
       success: true,
       messageId: messageIds[messageIds.length - 1],
       messageIds,
     });
   } catch (err) {
+    auditOutboundSend(chatId, chatId, 'error', err);
     res.status(500).json({ error: err.message });
   }
 });
