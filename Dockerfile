@@ -23,6 +23,8 @@ COPY --chown=hermes:hermes bootstrap/patch_approval_async.py /opt/hermes/bootstr
 COPY --chown=hermes:hermes bootstrap/patch_channel_noise_suppress.py /opt/hermes/bootstrap/patch_channel_noise_suppress.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_commands.py /opt/hermes/bootstrap/patch_disable_channel_commands.py
 COPY --chown=hermes:hermes bootstrap/patch_usage_tokens.py /opt/hermes/bootstrap/patch_usage_tokens.py
+COPY --chown=hermes:hermes bootstrap/patch_aux_usage_ledger.py /opt/hermes/bootstrap/patch_aux_usage_ledger.py
+COPY --chown=hermes:hermes bootstrap/mag_turn_ledger.py /opt/hermes/agent/mag_turn_ledger.py
 COPY --chown=hermes:hermes bootstrap/patch_toolsets_used.py /opt/hermes/bootstrap/patch_toolsets_used.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
 COPY --chown=hermes:hermes bootstrap/patch_forbidden_topics_gate.py /opt/hermes/bootstrap/patch_forbidden_topics_gate.py
@@ -31,11 +33,12 @@ COPY --chown=hermes:hermes bootstrap/patch_disable_channel_code_exec.py /opt/her
 COPY --chown=hermes:hermes bootstrap/patch_suppress_reset_banner.py /opt/hermes/bootstrap/patch_suppress_reset_banner.py
 COPY --chown=hermes:hermes entrypoint.sh /opt/hermes/entrypoint.sh
 
-# MAG Google Workspace + OneDrive MCP servers (stdio, zero-dependency Node). The
+# MAG bundled MCP servers (stdio, zero-dependency Node). The
 # MAG control plane wires them per-tenant via generated mcp_servers entries.
-RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp && chown -R hermes:hermes /opt/mag
+RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/c6-bank-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp && chown -R hermes:hermes /opt/mag
 COPY --chown=hermes:hermes mcp/google/server.mjs /opt/mag/google-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/onedrive/server.mjs /opt/mag/onedrive-mcp/server.mjs
+COPY --chown=hermes:hermes mcp/c6-bank/server.mjs /opt/mag/c6-bank-mcp/server.mjs
 
 # MAG Linear + ClickUp MCP servers (stdio, zero-dependency Node). Use the connector
 # token the user authorized in Fontes (fetched per-call from the MAG control plane).
@@ -47,6 +50,12 @@ COPY --chown=hermes:hermes mcp/clickup/server.mjs /opt/mag/clickup-mcp/server.mj
 # calling arbitrary HTTP APIs. Enables users to connect any REST API as a knowledge source.
 RUN mkdir -p /opt/mag/custom-proxy-mcp && chown -R hermes:hermes /opt/mag
 COPY --chown=hermes:hermes mcp/custom-proxy/server.mjs /opt/mag/custom-proxy-mcp/server.mjs
+
+# MAG WhatsApp Outbound MCP server (stdio, zero-dependency Node). Exposes send_whatsapp_message
+# tool for proactive messaging with confirmation validation, allowlist checking, and audit logging.
+# The bridge handles WHATSAPP_OUTBOUND_ALLOWED_USERS validation and JID normalization.
+RUN mkdir -p /opt/mag/whatsapp-outbound-mcp && chown -R hermes:hermes /opt/mag
+COPY --chown=hermes:hermes mcp/whatsapp-outbound/server.mjs /opt/mag/whatsapp-outbound-mcp/server.mjs
 
 # ByteRover memory OAuth helper — driven by the control plane (admin "Conectar memória").
 # Talks to the per-tenant brv daemon's transport (startOAuth/awaitOAuthCallback). See header.
@@ -91,6 +100,12 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_disable_channel_co
 # Usage metering: include per-turn token usage (tokens/cost/model) in the agent:end
 # hook so the control plane can record real LLM cost per turn. See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_usage_tokens.py
+
+# Auxiliary (vision/compression/web_extract/...) usage ledger: capture per-call
+# model+tokens for auxiliary LLM calls (which use separate models like gpt-4o)
+# so the control plane meters them against the REAL model instead of losing
+# them. Depends on mag_turn_ledger.py (COPY'd to /opt/hermes/agent/). See header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_aux_usage_ledger.py
 
 # Per-tool credits: report the toolsets a turn used in agent:end, so the control
 # plane can bill credits weighted by tool complexity. See script header.
@@ -152,24 +167,38 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_boot_deps
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_jid_normalization.py /opt/hermes/bootstrap/patch_whatsapp_jid_normalization.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_jid_normalization.py
 
-# WhatsApp outbound proativo: adiciona POST /send ao bridge com guard de allowlist.
-# Deve rodar APÓS patch_whatsapp_jid_normalization (usa normalizeWhatsAppJid).
+# WhatsApp outbound allowlist: enable proactive messaging with separate allowlist and audit.
+# Adds WHATSAPP_OUTBOUND_ALLOWED_USERS (distinct from WHATSAPP_ALLOWED_USERS), normalizes
+# JIDs in /send and /send-media endpoints, validates confirmation flag, and logs all attempts.
+# Must run AFTER jid normalization (depends on normalizeWhatsAppJid function).
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_outbound.py /opt/hermes/bootstrap/patch_whatsapp_outbound.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_outbound.py
 
+# WhatsApp LID allowlist reconciliation: keep the bridge-side LID<->phone mapping
+# compatible across both forward and reverse file formats so inbound allowlists
+# keep working when WhatsApp delivers users as @lid identifiers.
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_lid_allowlist.py /opt/hermes/bootstrap/patch_whatsapp_lid_allowlist.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_lid_allowlist.py
+
+# WhatsApp runtime authorization: preserve the proactive outbound guard while
+# allowing trusted runtime-originated sends (same-chat replies and cron deliveries)
+# to carry an internal system_authorized marker through the adapter/standalone path.
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_adapter_auth.py /opt/hermes/bootstrap/patch_whatsapp_adapter_auth.py
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_cron_auth.py /opt/hermes/bootstrap/patch_whatsapp_cron_auth.py
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_live_reply_auth.py /opt/hermes/bootstrap/patch_whatsapp_live_reply_auth.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_adapter_auth.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_cron_auth.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_live_reply_auth.py
+
 # ACK-wait: faz o /send aguardar confirmação do servidor WA antes de retornar sucesso.
-# Sem isso, erros como 463 (RESTRICT_ALL_COMPANIONS) chegam de forma assíncrona e o
-# agente nunca sabe que a mensagem foi rejeitada. Deve rodar APÓS patch_whatsapp_outbound.
+# Intercepta erros como 463 (RESTRICT_ALL_COMPANIONS) que chegam via pino/messages.update.
+# Condicional a confirmed_by_user=true — replies normais do gateway não são afetados.
+# Deve rodar APÓS todos os patches de auth do bridge.
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_ack_check.py /opt/hermes/bootstrap/patch_whatsapp_ack_check.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_ack_check.py
 
-# MCP server whatsapp-outbound (stdio, zero-dependency Node). Expõe send_whatsapp_message
-# ao agente para envio proativo de mensagens a contatos autorizados.
-RUN mkdir -p /opt/mag/whatsapp-outbound-mcp && chown -R hermes:hermes /opt/mag
-COPY --chown=hermes:hermes mcp/whatsapp-outbound/server.mjs /opt/mag/whatsapp-outbound-mcp/server.mjs
-
-# MCP server pdf-tools (stdio, Python + pymupdf). Expõe extract_pdf_images ao agente
-# para extrair imagens embutidas de PDFs — necessário porque execute_code está desabilitado
+# MCP server pdf-tools (stdio, Python + pymupdf). Expõe extract_pdf_images e
+# generate_pdf_report ao agente — necessário porque execute_code está desabilitado
 # em canais cliente (WhatsApp/Telegram).
 RUN mkdir -p /opt/mag/pdf-tools-mcp && chown -R hermes:hermes /opt/mag/pdf-tools-mcp
 COPY --chown=hermes:hermes mcp/pdf-tools/server.py /opt/mag/pdf-tools-mcp/server.py
@@ -177,7 +206,14 @@ COPY --chown=hermes:hermes mcp/pdf-tools/server.py /opt/mag/pdf-tools-mcp/server
 # Bake the WhatsApp bridge deps (Baileys) into the image. Otherwise the bridge runs a
 # slow/fragile ~3-min `npm install` on the FIRST pairing at runtime — which looks like
 # "the QR never generates". Baking it means the first QR is instant for every tenant.
-RUN cd /opt/hermes/scripts/whatsapp-bridge && npm install --no-audit --no-fund \
+# GH Actions has sporadic arm64 registry resets while resolving Baileys' transitive git
+# deps; bump npm fetch retries/timeouts so a transient network blip doesn't fail publish.
+RUN cd /opt/hermes/scripts/whatsapp-bridge \
+    && npm install --no-audit --no-fund \
+        --fetch-retries=5 \
+        --fetch-retry-factor=2 \
+        --fetch-retry-mintimeout=20000 \
+        --fetch-retry-maxtimeout=120000 \
     && chown -R hermes:hermes node_modules
 
 # WhatsApp web pairing: a self-contained pairing module + 4 thin gateway routes

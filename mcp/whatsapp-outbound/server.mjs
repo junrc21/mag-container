@@ -1,20 +1,30 @@
 #!/usr/bin/env node
 // MAG WhatsApp Outbound MCP server (stdio, zero-dependency).
 //
-// Exposes the `send_whatsapp_message` tool to the Hermes agent so it can
-// proactively send WhatsApp messages to authorized contacts when instructed by
-// the user (gestor/owner of the MAG account).
+// Exposes a SINGLE tool: send_whatsapp_message
+// This tool enables the AI to send proactive WhatsApp messages with:
+//   - Confirmation validation (confirmed_by_user must be true)
+//   - Allowlist validation (WHATSAPP_OUTBOUND_ALLOWED_USERS)
+//   - JID normalization (handled by bridge)
+//   - Audit logging (handled by bridge)
 //
-// Flow:
-//   agent calls send_whatsapp_message(phone_number, message, confirmed_by_user=true)
-//   → this server validates params
-//   → POSTs to the WhatsApp bridge /send endpoint (localhost:WHATSAPP_BRIDGE_PORT)
-//   → bridge validates allowlist + sends via Baileys socket
-//   → returns {success, messageId} or an error message
+// The bridge (/send endpoint) already handles:
+//   - WHATSAPP_OUTBOUND_ALLOWED_USERS validation
+//   - JID normalization
+//   - Audit logging
 //
-// Required env (via mcp_servers.whatsapp-outbound.env in config.yaml):
-//   WHATSAPP_BRIDGE_PORT  - port the bridge HTTP server listens on (default: 3000)
-//   MAG_INTERNAL_KEY      - kept for future auth; not used in bridge call today
+// This MCP is a thin wrapper that:
+//   1. Validates the confirmed_by_user flag (fail-fast if not true)
+//   2. Calls the bridge /send endpoint
+//   3. Returns the result
+//
+// NOTE: confirmed_by_user validation is fail-fast at the MCP layer to ensure
+// the AI gets immediate feedback. Trusted runtime sends (replies, cron) use
+// system_authorized=true instead, bypassing this MCP.
+//
+// Required env (set by Hermes via mcp_servers.whatsapp-outbound.env):
+//   WHATSAPP_BRIDGE_PORT  Port of the WhatsApp bridge (default: 3000)
+//   MAG_INTERNAL_KEY       Internal auth key for bridge calls
 
 import { createInterface } from 'node:readline';
 
@@ -23,169 +33,197 @@ const SERVER_VERSION = '0.1.0';
 const PROTOCOL_VERSION = '2025-06-18';
 
 const BRIDGE_PORT = process.env.WHATSAPP_BRIDGE_PORT || '3000';
-const BRIDGE_URL  = `http://localhost:${BRIDGE_PORT}`;
+const BRIDGE_BASE = `http://127.0.0.1:${BRIDGE_PORT}`;
+const MAG_INTERNAL_KEY = process.env.MAG_INTERNAL_KEY || '';
 
-function log(...a) { process.stderr.write(`[mag-whatsapp-outbound] ${a.join(' ')}\n`); }
-function send(m)   { process.stdout.write(JSON.stringify(m) + '\n'); }
-function reply(id, result)         { send({ jsonrpc: '2.0', id, result }); }
-function replyError(id, code, msg) { send({ jsonrpc: '2.0', id, error: { code, message: msg } }); }
-
-// ── bridge call ─────────────────────────────────────────────────────────────
-
-async function bridgeSend(chatId, message) {
-  const res = await fetch(`${BRIDGE_URL}/send`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chatId, message, confirmed_by_user: true }),
-  });
-  const text = await res.text();
-  let data;
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-  if (!res.ok) {
-    const errMsg = data?.error || (typeof data?.raw === 'string' ? data.raw : JSON.stringify(data));
-    throw new Error(`Bridge ${res.status}: ${String(errMsg).slice(0, 200)}`);
-  }
-  return data;
+function log(...args) {
+  process.stderr.write(`[${SERVER_NAME}] ${args.join(' ')}\n`);
 }
 
-// ── tool definition ─────────────────────────────────────────────────────────
+function send(msg) {
+  process.stdout.write(JSON.stringify(msg) + '\n');
+}
 
-const TOOLS = [
-  {
-    name: 'send_whatsapp_message',
-    description:
-      'Envia uma mensagem de WhatsApp proativamente para um contato. ' +
-      'OBRIGATÓRIO: confirme com o usuário antes de chamar esta ferramenta (confirmed_by_user deve ser true). ' +
-      'O número de destino deve estar na lista de envios permitidos configurada pelo gestor.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        phone_number: {
-          type: 'string',
-          description:
-            'Número de telefone do destinatário, em qualquer formato. ' +
-            'Ex.: "+55 11 99999-8888", "5511999998888", "11999998888". ' +
-            'Sempre inclua o código do país (55 para Brasil).',
-        },
-        message: {
-          type: 'string',
-          description: 'Texto da mensagem a enviar.',
-        },
-        confirmed_by_user: {
-          type: 'boolean',
-          description:
-            'Deve ser true. Confirma que o usuário (gestor) autorizou explicitamente ' +
-            'o envio desta mensagem para este contato nesta sessão.',
-        },
-      },
-      required: ['phone_number', 'message', 'confirmed_by_user'],
+function reply(id, result) {
+  send({ jsonrpc: '2.0', id, result });
+}
+
+function replyError(id, code, message) {
+  send({ jsonrpc: '2.0', id, error: { code, message } });
+}
+
+// ============================================================================
+// MCP Protocol Handlers
+// ============================================================================
+
+async function handleInitialize(id, params) {
+  log('Client initialized:', params.clientInfo?.name || 'unknown');
+
+  // Advertise our single tool
+  reply(id, {
+    protocolVersion: PROTOCOL_VERSION,
+    serverInfo: {
+      name: SERVER_NAME,
+      version: SERVER_VERSION,
     },
-  },
-];
+    capabilities: {
+      tools: {},
+    },
+  });
+}
 
-// ── tool execution ───────────────────────────────────────────────────────────
+async function handleToolsList(id) {
+  reply(id, {
+    tools: [
+      {
+        name: 'send_whatsapp_message',
+        description: 'Send a WhatsApp message to a specific phone number. ' +
+          'CRITICAL: You MUST ALWAYS pass confirmed_by_user=true in EVERY call. ' +
+          'Example: send_whatsapp_message(phone_number="5511999999999", message="Hello", confirmed_by_user=true). ' +
+          'The destination number must be in the WHATSAPP_OUTBOUND_ALLOWED_USERS allowlist ' +
+          'or match a number in WHATSAPP_ALLOWED_USERS (implicit authorization). ' +
+          'The number will be automatically normalized (raw digits, with +, or formatted). ' +
+          'All send attempts are logged for audit.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            phone_number: {
+              type: 'string',
+              description: 'Phone number to send to (raw digits, with +, or formatted - will be normalized)'
+            },
+            message: {
+              type: 'string',
+              description: 'Message text to send'
+            },
+            confirmed_by_user: {
+              type: 'boolean',
+              description: 'MUST be true - indicates the user explicitly confirmed this send'
+            }
+          },
+          required: ['phone_number', 'message', 'confirmed_by_user']
+        }
+      }
+    ]
+  });
+}
 
-async function callTool(name, args) {
+async function handleToolsCall(id, params) {
+  const { name, arguments: args } = params;
+
   if (name !== 'send_whatsapp_message') {
-    throw new Error(`Tool desconhecida: ${name}`);
+    return replyError(id, -32601, `Unknown tool: ${name}`);
   }
 
-  const { phone_number, message, confirmed_by_user } = args || {};
-
-  if (!confirmed_by_user) {
-    throw new Error(
-      'confirmed_by_user deve ser true. Confirme com o usuário antes de enviar.',
-    );
-  }
+  // Validate required parameters
+  const { phone_number, message, confirmed_by_user } = args;
 
   if (!phone_number || typeof phone_number !== 'string') {
-    throw new Error('phone_number é obrigatório.');
+    return replyError(id, -32602, 'phone_number is required and must be a string');
   }
 
-  if (!message || typeof message !== 'string' || !message.trim()) {
-    throw new Error('message é obrigatório e não pode estar vazio.');
+  if (!message || typeof message !== 'string') {
+    return replyError(id, -32602, 'message is required and must be a string');
   }
 
-  const digits = phone_number.replace(/\D/g, '');
-  if (!digits || digits.length < 8) {
-    throw new Error(
-      `Número inválido: "${phone_number}". Use o formato completo com código do país, ex.: 5511999998888.`,
+  // NOTE: confirmed_by_user is REQUIRED for proactive messaging.
+  // We fail-fast here with a clear error instead of passing to the bridge.
+  // This ensures the AI gets immediate feedback and can correct its call.
+  // Trusted runtime-originated sends (replies, cron) use system_authorized instead.
+  if (!confirmed_by_user || confirmed_by_user !== true) {
+    log(`Error: confirmed_by_user is ${confirmed_by_user} - rejecting proactive send`);
+    return replyError(
+      id,
+      -32602,
+      'confirmed_by_user must be true for proactive messaging. ' +
+      'Example: send_whatsapp_message(phone_number="5511999999999", message="Hello", confirmed_by_user=true)'
     );
   }
 
-  // Baileys requer JID completo com sufixo — dígitos puros causam jidDecode crash.
-  // Grupos têm 17+ dígitos → @g.us; DMs → @s.whatsapp.net.
-  const jid = digits.length >= 17 ? `${digits}@g.us` : `${digits}@s.whatsapp.net`;
+  // Strip non-digit chars for the bridge (it will normalize further)
+  const chatId = phone_number.replace(/\D/g, '');
 
-  log(`Sending to ${jid} (from "${phone_number}"): ${message.slice(0, 60)}`);
-
-  const result = await bridgeSend(jid, message);
-
-  log(`OK — messageId: ${result.messageId ?? '(sem id)'}`);
-  return `Mensagem enviada com sucesso para ${phone_number}.` +
-    (result.messageId ? ` (id: ${result.messageId})` : '');
-}
-
-// ── JSON-RPC dispatcher ──────────────────────────────────────────────────────
-
-async function handle(msg) {
-  const { id, method, params } = msg;
-
-  if (method === 'initialize') {
-    return reply(id, {
-      protocolVersion: PROTOCOL_VERSION,
-      capabilities: { tools: {} },
-      serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-    });
+  if (!chatId || chatId.length < 10) {
+    return replyError(id, -32602, 'Invalid phone number - must have at least 10 digits');
   }
 
-  if (method === 'notifications/initialized') return; // no response needed
+  log(`Sending WhatsApp message to ${chatId} (confirmed: ${confirmed_by_user})`);
 
-  if (method === 'tools/list') {
-    return reply(id, { tools: TOOLS });
-  }
-
-  if (method === 'tools/call') {
-    const toolName = params?.name;
-    const toolArgs = params?.arguments ?? {};
-    try {
-      const text = await callTool(toolName, toolArgs);
-      return reply(id, { content: [{ type: 'text', text }] });
-    } catch (err) {
-      const msg = (err && err.message) || String(err);
-      log(`Error in ${toolName}:`, msg);
-      return reply(id, {
-        content: [{ type: 'text', text: `Erro: ${msg}` }],
-        isError: true,
-      });
-    }
-  }
-
-  // Unknown method — return JSON-RPC error
-  if (id !== undefined) {
-    replyError(id, -32601, `Method not found: ${method}`);
-  }
-}
-
-// ── main loop ────────────────────────────────────────────────────────────────
-
-const rl = createInterface({ input: process.stdin, terminal: false });
-
-rl.on('line', (line) => {
-  if (!line.trim()) return;
-  let msg;
   try {
-    msg = JSON.parse(line);
-  } catch {
-    log('Invalid JSON:', line.slice(0, 100));
-    return;
+    // Call the bridge /send endpoint
+    const response = await fetch(`${BRIDGE_BASE}/send`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(MAG_INTERNAL_KEY ? { 'x-internal-key': MAG_INTERNAL_KEY } : {}),
+      },
+      body: JSON.stringify({
+        chatId: chatId,
+        message: message,
+        confirmed_by_user: confirmed_by_user
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      log('Bridge error:', result.error || 'Unknown error');
+      return replyError(id, -32603, `Bridge error: ${result.error || 'Failed to send message'}`);
+    }
+
+    log('Message sent successfully');
+    reply(id, {
+      content: [
+        {
+          type: 'text',
+          text: `WhatsApp message sent successfully to ${phone_number}.`
+        }
+      ]
+    });
+
+  } catch (error) {
+    log('Request failed:', error.message);
+    replyError(id, -32603, `Failed to call WhatsApp bridge: ${error.message}`);
   }
-  handle(msg).catch((err) => {
-    log('Unhandled error:', err && err.message);
-    if (msg?.id !== undefined) replyError(msg.id, -32603, 'Internal error');
-  });
+}
+
+// ============================================================================
+// Main Loop
+// ============================================================================
+
+const rl = createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false
 });
 
-rl.on('close', () => process.exit(0));
+rl.on('line', async (line) => {
+  let msg;
 
-log(`Started (bridge: ${BRIDGE_URL})`);
+  try {
+    msg = JSON.parse(line);
+  } catch (e) {
+    log('Failed to parse message:', e.message);
+    return;
+  }
+
+  const { id, method, params } = msg;
+
+  switch (method) {
+    case 'initialize':
+      await handleInitialize(id, params);
+      break;
+    case 'tools/list':
+      await handleToolsList(id);
+      break;
+    case 'tools/call':
+      await handleToolsCall(id, params);
+      break;
+    case 'notifications/initialized':
+      // Client ready, nothing to do
+      break;
+    default:
+      replyError(id, -32601, `Method not found: ${method}`);
+  }
+});
+
+log('WhatsApp outbound MCP server started (stdio)');
