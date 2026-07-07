@@ -56,6 +56,21 @@ def _http_get(path: str, timeout: float = 3.0):
         return None
 
 
+def _http_post(path: str, body: dict, timeout: float = 10.0):
+    try:
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            f"{BASE}{path}",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode())
+    except Exception:
+        return None
+
+
 def _bridge_alive() -> bool:
     return _http_get("/status", timeout=2) is not None
 
@@ -179,3 +194,29 @@ async def handle_logout(request):
         return web.json_response({"error": "unauthorized"}, status=401)
     await _run(_stop_and_wipe)
     return web.json_response({"ok": True})
+
+
+async def handle_send_direct(request):
+    """POST /api/whatsapp/send-direct — send a WhatsApp message directly via the
+    bridge without going through the LLM. Used for approval/reload notifications
+    so they work even when no valid LLM key is configured.
+    Body: { chatId: string, message: string }
+    """
+    if not _authed(request):
+        return web.json_response({"error": "unauthorized"}, status=401)
+    try:
+        body = await request.json()
+        chat_id = body.get("chatId")
+        message = body.get("message")
+        if not chat_id or not message:
+            return web.json_response({"error": "chatId and message required"}, status=400)
+        result = await _run(_http_post, "/send", {
+            "chatId": chat_id,
+            "message": message,
+            "system_authorized": True,
+        })
+        if result is None:
+            return web.json_response({"error": "bridge unavailable or not connected"}, status=503)
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)

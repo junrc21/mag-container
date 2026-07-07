@@ -34,18 +34,19 @@ def apply(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new, 1)
 
 
-# --- Edit 1: register the 4 routes (after /v1/chat/completions) ---------------
+# --- Edit 1: register the 5 routes (after /v1/chat/completions) ---------------
 OLD_ROUTES = '            self._app.router.add_post("/v1/chat/completions", self._handle_chat_completions)\n'
 NEW_ROUTES = (
     '            self._app.router.add_post("/v1/chat/completions", self._handle_chat_completions)\n'
-    "            # _mag_wa_pair: WhatsApp web pairing (QR). Logic in mag_whatsapp_pairing.py.\n"
+    "            # _mag_wa_pair: WhatsApp web pairing (QR) + direct send. Logic in mag_whatsapp_pairing.py.\n"
     '            self._app.router.add_post("/api/whatsapp/pair", self._mag_wa_pair)\n'
     '            self._app.router.add_get("/api/whatsapp/qr", self._mag_wa_qr)\n'
     '            self._app.router.add_get("/api/whatsapp/status", self._mag_wa_status)\n'
     '            self._app.router.add_post("/api/whatsapp/logout", self._mag_wa_logout)\n'
+    '            self._app.router.add_post("/api/whatsapp/send-direct", self._mag_wa_send_direct)\n'
 )
 
-# --- Edit 2: 4 thin wrapper methods (before _handle_models) -------------------
+# --- Edit 2: 5 thin wrapper methods (before _handle_models) -------------------
 OLD_METHODS = (
     '    async def _handle_models(self, request: "web.Request") -> "web.Response":\n'
     '        """GET /v1/models — return hermes-agent as an available model."""\n'
@@ -66,6 +67,10 @@ NEW_METHODS = (
     "    async def _mag_wa_logout(self, request):\n"
     "        from gateway.platforms import mag_whatsapp_pairing as _wa\n"
     "        return await _wa.handle_logout(request)\n"
+    "\n"
+    "    async def _mag_wa_send_direct(self, request):\n"
+    "        from gateway.platforms import mag_whatsapp_pairing as _wa\n"
+    "        return await _wa.handle_send_direct(request)\n"
     "\n"
     '    async def _handle_models(self, request: "web.Request") -> "web.Response":\n'
     '        """GET /v1/models — return hermes-agent as an available model."""\n'
