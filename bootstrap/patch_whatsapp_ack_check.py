@@ -7,7 +7,11 @@ immediately, so the MCP server — and therefore the agent — never learned of 
 
 Fix (3 parts):
   1. Replace the pino logger with a pino-stream-intercepting wrapper that captures Baileys
-     error-ACK log calls (logger.warn({id, error}, 'received error in ack')).
+     error-ACK log calls (logger.warn({id, error}, 'received error in ack')). On a 463
+     (RESTRICT_ALL_COMPANIONS) it also POSTs to the MAG control plane
+     (/internal/runtime/<slug>/whatsapp-send-health, best-effort, debounced 60 s) so the
+     panel flags the channel and the owner/admin is alerted — the session stays
+     'connected' during a 463 storm, so the control-plane health poll can't detect it.
   2. Inject a sock.ev.on('messages.update', ...) listener inside startSocket() as a
      belt-and-suspenders fallback for status=0 (ERROR) delivery receipts.
   3. In the /send route, await a Promise ONLY when confirmed_by_user===true (proactive
@@ -39,6 +43,31 @@ NEW_LOGGER = """\
 // immediately reject the in-flight Promise registered by /send for that messageId.
 const _magPendingOutbound = new Map();
 const _MAG_ACK_WAIT_MS = parseInt(process.env.WHATSAPP_ACK_WAIT_MS || '8000', 10);
+// _mag_ack_check: report account-level send restrictions (WA error 463
+// RESTRICT_ALL_COMPANIONS) to the MAG control plane. The Baileys session stays
+// 'connected' during a 463 storm, so the control plane's health poll can NEVER see it —
+// only the bridge knows. We POST once so the panel flags the channel + the owner/admin
+// gets alerted, instead of the failure being invisible ("digita e some, sem responder").
+// Best-effort and debounced (60 s) so a 463 on every message doesn't flood the API.
+let _magLastSendHealthReport = 0;
+function _magReportSendRestricted(errCode) {
+  try {
+    const _now = Date.now();
+    if (_now - _magLastSendHealthReport < 60000) return; // debounce: 1 report / 60 s
+    _magLastSendHealthReport = _now;
+    let _api = process.env.MAG_API_URL || '';
+    while (_api.endsWith('/')) _api = _api.slice(0, -1);
+    const _slug = process.env.MAG_TENANT_SLUG || '';
+    const _key = process.env.MAG_INTERNAL_KEY || process.env.MAG_API_INTERNAL_KEY || '';
+    if (!_api || !_slug || !_key || typeof fetch !== 'function') return;
+    fetch(_api + '/internal/runtime/' + _slug + '/whatsapp-send-health', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + _key },
+      body: JSON.stringify({ error: String(errCode), reason: 'RESTRICT_ALL_COMPANIONS' }),
+    }).then(() => console.log('[bridge-ack] reported send-restriction (463) to control plane'))
+      .catch(() => {});
+  } catch (_e) { /* best-effort — never let reporting break the bridge */ }
+}
 const _magPinoStream = {
   write(data) {
     process.stdout.write(data);
@@ -50,6 +79,8 @@ const _magPinoStream = {
       const _aErr = obj?.attrs?.error || obj?.error;
       if (_aId && _aErr) {
         console.log('[bridge-ack] pino error: id=' + _aId + ' error=' + _aErr);
+        // 463 = RESTRICT_ALL_COMPANIONS: account-level send block, surface it to the panel.
+        if (String(_aErr) === '463') _magReportSendRestricted(_aErr);
         const _p = _magPendingOutbound.get(_aId);
         if (_p) { _magPendingOutbound.delete(_aId); _p.reject(new Error(`WA error ${_aErr}`)); }
         else { console.log('[bridge-ack] late error (after window): id=' + _aId); }
