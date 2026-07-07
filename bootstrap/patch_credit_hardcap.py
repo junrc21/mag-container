@@ -25,9 +25,15 @@ MARKER = "_mag_credit_block_message"
 HELPERS_ANCHOR = "def _gateway_platform_value(platform: Any) -> str:"
 HELPERS = '''# MAG: credit hard cap (Fase 2) — block client turns when the tenant is out of
 # credits. Balance is cached by the usage hook; re-checked live before blocking.
-_MAG_CREDIT_LIMIT_MSG = (
-    "Você atingiu o limite do seu plano este mês. "
-    "Fale com o suporte da CyriusX para liberar mais."
+_MAG_CREDIT_LIMIT_MSG_FREE = (
+    "Você usou todos os seus créditos gratuitos. "
+    "Para continuar usando a MAG, faça upgrade para um plano pago "
+    "em Uso e Plano no painel de controle."
+)
+_MAG_CREDIT_LIMIT_MSG_PAID = (
+    "Você atingiu o limite de créditos do seu plano este mês. "
+    "Seus créditos renovam automaticamente no próximo ciclo. "
+    "Fale com o suporte da CyriusX para liberar mais antes disso."
 )
 
 
@@ -55,7 +61,11 @@ def _mag_fetch_credits():
         rem = data.get("creditsRemaining")
         try:
             with open(_mag_credits_path(), "w") as f:
-                _json.dump({"creditsRemaining": rem, "creditsMax": data.get("creditsMax")}, f)
+                _json.dump({
+                    "creditsRemaining": rem,
+                    "creditsMax": data.get("creditsMax"),
+                    "plan": data.get("plan"),
+                }, f)
         except Exception:
             pass
         return rem
@@ -77,12 +87,19 @@ def _mag_credit_block_message(source):
         with open(path) as f:
             data = _json.load(f)
         rem = data.get("creditsRemaining")
+        plan = data.get("plan", "")
         if isinstance(rem, (int, float)) and rem <= 0:
             fresh = _mag_fetch_credits()
             if isinstance(fresh, (int, float)):
                 rem = fresh
+            # Re-read plan from cache after live refresh (may have been updated)
+            try:
+                with open(path) as f2:
+                    plan = _json.load(f2).get("plan", plan)
+            except Exception:
+                pass
             if isinstance(rem, (int, float)) and rem <= 0:
-                return _MAG_CREDIT_LIMIT_MSG
+                return _MAG_CREDIT_LIMIT_MSG_FREE if plan == "free" else _MAG_CREDIT_LIMIT_MSG_PAID
     except Exception:
         return None
     return None
