@@ -36,8 +36,7 @@ def apply(text: str, old: str, new: str, label: str) -> str:
     if old not in text:
         sys.exit(
             f"FATAL: api_server anchor not found for '{label}'. "
-            f"Upstream api_server.py (or patch_whatsapp_gateway.py) changed — "
-            f"update patch_telegram_gateway.py."
+            f"Upstream api_server.py changed — update patch_telegram_gateway.py."
         )
     print(f"  [ok]   {label}")
     return text.replace(old, new, 1)

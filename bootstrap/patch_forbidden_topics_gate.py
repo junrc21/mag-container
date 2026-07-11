@@ -3,7 +3,8 @@
 The MAG control plane writes `~/policy/forbidden-topics.json` with per-tenant topic
 rules. Each rule contains keyword/phrase matches plus optional sender exceptions:
   - Telegram: exact user IDs
-  - WhatsApp: numbers (JIDs are normalized to digits)
+  - WhatsApp (whatsapp_cloud, official Meta Cloud API): phone numbers,
+    normalized to bare digits
 
 When an inbound client-channel message matches a restricted topic and the sender is
 NOT in that rule's allowlist, the gateway returns a humane refusal immediately,
@@ -130,7 +131,7 @@ def _mag_sender_allowed_for_policy(source, policy) -> bool:
                 or get_session_env("HERMES_SESSION_CHAT_ID", "")
             )
             return str(sender).strip() in set(policy.get("allowedTelegramUserIds") or [])
-        if platform_name == "whatsapp":
+        if platform_name in ("whatsapp", "whatsapp_cloud"):
             sender = (
                 get_session_env("HERMES_SESSION_USER_ID", "")
                 or str(getattr(source, "user_id", "") or "").strip()
