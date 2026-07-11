@@ -167,7 +167,7 @@ async function handleToolsCall(id, params) {
 
     if (!response.ok) {
       log('Bridge error:', result.error || 'Unknown error');
-      return replyError(id, -32603, `Bridge error: ${result.error || 'Failed to send message'}`);
+      return replyError(id, -32603, `Bridge error [reason:${result.reason || 'internal_error'}]: ${result.error || 'Failed to send message'}`);
     }
 
     log('Message sent successfully');

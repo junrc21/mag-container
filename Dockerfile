@@ -197,6 +197,16 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_live_repl
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_ack_check.py /opt/hermes/bootstrap/patch_whatsapp_ack_check.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_ack_check.py
 
+# Trava de segurança contra "cold reach-out": mandar mensagem pra um contato que nunca
+# trocou mensagem com esse número é a causa nº1 de restrição/bloqueio de conta no
+# WhatsApp. Rastreia histórico de contato (persistido, sobrevive a restart/re-pareamento)
+# e aplica limite diário de contatos novos + espaçamento mínimo + limite diário geral,
+# só para destinos autorizados apenas pelo coringa '*' do outbound allowlist (destinos
+# explícitos continuam sem trava extra). Depende de patch_whatsapp_outbound.py e
+# patch_whatsapp_ack_check.py (roda após ambos).
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_cold_contact_guard.py /opt/hermes/bootstrap/patch_whatsapp_cold_contact_guard.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_cold_contact_guard.py
+
 # Rebrand: muda 'Hermes Agent' → 'MAG - CyriusX' no browser array (nome no pareamento WA)
 # e zera DEFAULT_REPLY_PREFIX para o nome interno não vazar nas mensagens ao cliente.
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_branding.py /opt/hermes/bootstrap/patch_whatsapp_branding.py
