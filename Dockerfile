@@ -241,8 +241,8 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_gateway.p
 
 # Telegram pairing approval over HTTP: lets the web approve the pairing code Hermes DMs
 # an un-allowlisted user (delegates to Hermes' own PairingStore). 3 thin gateway routes
-# (/api/telegram/pairing[/approve|/revoke]). Runs AFTER the WhatsApp gateway patch — it
-# anchors on the WhatsApp routes that patch inserts. See script headers.
+# (/api/telegram/pairing[/approve|/revoke]). Anchors directly on the base api_server.py
+# text — independent of any WhatsApp-related patch. See script headers.
 COPY --chown=hermes:hermes bootstrap/mag_telegram_pairing.py /opt/hermes/gateway/platforms/mag_telegram_pairing.py
 COPY --chown=hermes:hermes bootstrap/patch_telegram_gateway.py /opt/hermes/bootstrap/patch_telegram_gateway.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_telegram_gateway.py
