@@ -12,7 +12,9 @@ metadata:
 
 # PDF Generation
 
-Two approaches depending on the content type:
+**On client channels (WhatsApp/Telegram): this skill's raw `/usr/bin/chromium` commands require `execute_code`, which is NOT available there (the toolset is removed on client channels, not just denied — see `ocr-and-documents` skill). Use the `generate_pdf_report` tool from the `pdf-tools` MCP instead — it does the same HTML→chromium conversion server-side, accepts a `body` field for narrative text plus `images` with captions, and works without `execute_code`.**
+
+**On server/CLI (`execute_code` available):** two approaches depending on the content type:
 
 | Approach | Best for | Tool |
 |----------|----------|------|

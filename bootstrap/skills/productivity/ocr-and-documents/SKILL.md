@@ -172,7 +172,24 @@ for path in extracted:
 
 ## PDF with Embedded Images → New PDF (preserving photos)
 
-When the user wants to **recreate or translate a PDF that contains photos**, extract the images first and then embed them in the new document via chromium HTML.
+When the user wants to **recreate or translate a PDF that contains photos** (e.g. "gera um PDF profissional a partir deste relatório de inspeção"), the steps differ by surface — pick based on where you're running.
+
+**On client channels (WhatsApp/Telegram): use the `pdf-tools` MCP end to end. Do NOT use `execute_code` or the raw chromium command from the `pdf-generation` skill — `execute_code` is not available on client channels at all (the toolset is removed, not just denied), so that path silently cannot work here.**
+
+```
+1. extract_pdf_images(pdf_path=...)          # pdf-tools MCP — get the embedded photos
+2. pymupdf4llm.to_markdown(src) is NOT available without execute_code either.
+   Use page.get_text() output you already have from Step 1 of document analysis,
+   or skip narrative text if you only have images.
+3. generate_pdf_report(                       # pdf-tools MCP — builds + renders the final PDF
+     title="...",
+     body="<narrative text/findings extracted from the original PDF, plain text>",
+     images=[{"path": "...", "caption": "..."}, ...],
+   )
+```
+`generate_pdf_report`'s `body` field accepts the narrative/findings text (plain text, blank-line-separated paragraphs) so the output PDF isn't limited to just images — this is the one tool that does the chromium HTML→PDF conversion without needing `execute_code`.
+
+**On server/CLI (execute_code available):** combine text + images yourself via chromium HTML if you need layout `generate_pdf_report` doesn't support.
 
 ```python
 import pymupdf

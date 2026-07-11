@@ -7,7 +7,7 @@ within /opt/data — no arbitrary filesystem access.
 
 Tools:
   extract_pdf_images    — extract embedded JPEG/PNG images from a cached PDF
-  generate_pdf_report   — create a PDF report with title, date, images and captions
+  generate_pdf_report   — create a PDF report with title, date, body text, images and captions
 """
 
 import json
@@ -15,8 +15,18 @@ import os
 import sys
 
 SERVER_NAME = "mag-pdf-tools"
-SERVER_VERSION = "0.2.0"
+SERVER_VERSION = "0.3.0"
 PROTOCOL_VERSION = "2025-06-18"
+
+# Longer side any embedded image is downscaled to before base64-embedding (keeps
+# HTML size + chromium render time bounded for multi-photo reports, e.g. full-res
+# inspection photos). Skipped gracefully if Pillow isn't importable.
+MAX_IMAGE_DIMENSION = 1600
+
+# Wall-clock budget for the chromium print-to-pdf subprocess. Bumped from the
+# original 60s: several downscaled-but-still-numerous embedded photos can still
+# take a while to lay out and rasterize under load.
+CHROMIUM_TIMEOUT_SECONDS = 120
 
 OUTPUT_DIR = "/opt/data/workspace"
 
@@ -73,8 +83,11 @@ TOOLS = [
     {
         "name": "generate_pdf_report",
         "description": (
-            "Gera um relatório em PDF com título, data e imagens com legendas. "
-            "Use quando o usuário pedir para criar/gerar um documento PDF com fotos. "
+            "Gera um relatório em PDF com título, data, texto narrativo opcional e imagens com legendas. "
+            "Use quando o usuário pedir para criar/gerar um documento PDF com fotos (com ou sem texto/laudo). "
+            "Este é o único caminho de geração de PDF disponível em canais de cliente (WhatsApp/Telegram) — "
+            "não depende de execute_code. Se você já extraiu texto do PDF original (ex: via pymupdf4llm), "
+            "passe esse texto em 'body' em vez de tentar montar HTML/chromium manualmente. "
             "Retorna o caminho do PDF gerado — inclua MEDIA:<path> na resposta para enviá-lo."
         ),
         "inputSchema": {
@@ -83,6 +96,15 @@ TOOLS = [
                 "title": {
                     "type": "string",
                     "description": "Título do relatório.",
+                },
+                "body": {
+                    "type": "string",
+                    "description": (
+                        "Texto narrativo do relatório (ex: laudo/achados extraídos do PDF original). "
+                        "Texto simples com parágrafos separados por linha em branco — sem HTML. "
+                        "Renderizado entre o subtítulo e a grade de imagens."
+                    ),
+                    "default": "",
                 },
                 "images": {
                     "type": "array",
@@ -112,7 +134,7 @@ TOOLS = [
                     "default": 1,
                 },
             },
-            "required": ["title", "images"],
+            "required": ["title"],
         },
     },
 ]
@@ -180,9 +202,35 @@ def extract_pdf_images(pdf_path: str, max_images: int = 10, min_size: int = 100)
     return extracted
 
 
-def generate_pdf_report(title: str, images: list, subtitle: str = "",
+def _downscale_for_embed(path: str) -> str:
+    """Return a path to a copy of the image capped at MAX_IMAGE_DIMENSION on its
+    longer side, so base64-embedding many full-resolution photos (e.g. inspection
+    report photos straight off a phone camera) doesn't bloat the HTML and stall
+    chromium's render. Falls back to the original path if Pillow isn't available
+    or the image can't be read — never blocks report generation on this step."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return path
+
+    try:
+        with Image.open(path) as im:
+            if max(im.size) <= MAX_IMAGE_DIMENSION:
+                return path
+            im.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
+            scaled_path = f"{path}.scaled.jpg"
+            rgb = im.convert("RGB") if im.mode not in ("RGB", "L") else im
+            rgb.save(scaled_path, "JPEG", quality=85)
+            return scaled_path
+    except Exception as e:
+        log(f"  Downscale skipped for {path}: {e}")
+        return path
+
+
+def generate_pdf_report(title: str, images: list, subtitle: str = "", body: str = "",
                         output_name: str = "relatorio", images_per_row: int = 1):
     from datetime import date
+    from html import escape
 
     today = date.today().strftime("%d/%m/%Y")
 
@@ -203,18 +251,22 @@ def generate_pdf_report(title: str, images: list, subtitle: str = "",
             continue
         valid_images.append({"path": real, "caption": caption})
 
-    if not valid_images:
-        raise ValueError("No valid images found. Check that the image paths are correct and under /opt/data.")
+    if not valid_images and not body.strip():
+        raise ValueError(
+            "No valid images and no body text found. Provide at least one valid image "
+            "(path under /opt/data) or a 'body' with narrative text."
+        )
 
     # Build HTML with embedded images as base64 to avoid chromium file:// security restrictions
     import base64
     import mimetypes
 
     def img_to_data_url(path: str) -> str:
-        mime, _ = mimetypes.guess_type(path)
+        embed_path = _downscale_for_embed(path)
+        mime, _ = mimetypes.guess_type(embed_path)
         if not mime:
             mime = "image/jpeg"
-        with open(path, "rb") as f:
+        with open(embed_path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("ascii")
         return f"data:{mime};base64,{b64}"
 
@@ -228,15 +280,23 @@ def generate_pdf_report(title: str, images: list, subtitle: str = "",
         except Exception as e:
             log(f"  Failed to encode image {item['path']}: {e}")
             continue
-        caption_html = f'<p class="caption">{item["caption"]}</p>' if item["caption"] else ""
+        caption_html = f'<p class="caption">{escape(item["caption"])}</p>' if item["caption"] else ""
         img_html_parts.append(
             f'<div style="width:{col_width};{col_style}margin:8px 1%;">'
             f'<img src="{data_url}" style="max-width:100%;height:auto;border:1px solid #ddd;">'
             f'{caption_html}</div>'
         )
 
-    subtitle_html = f'<p class="subtitle">{subtitle}</p>' if subtitle else ""
+    subtitle_html = f'<p class="subtitle">{escape(subtitle)}</p>' if subtitle else ""
     images_html = "\n".join(img_html_parts)
+
+    # body is plain text (no HTML from the model) — escape, then turn blank-line-
+    # separated blocks into paragraphs so multi-paragraph narrative renders cleanly.
+    body_html = ""
+    if body.strip():
+        paragraphs = [p.strip() for p in body.strip().split("\n\n") if p.strip()]
+        body_html = "\n".join(f"<p>{escape(p).replace(chr(10), '<br>')}</p>" for p in paragraphs)
+        body_html = f'<div class="body">{body_html}</div>'
 
     html = f"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -247,14 +307,17 @@ def generate_pdf_report(title: str, images: list, subtitle: str = "",
   h1 {{ color: #1a1a2e; border-bottom: 2px solid #6c3483; padding-bottom: 8px; margin-bottom: 4px; }}
   .subtitle {{ color: #555; margin: 4px 0 8px 0; font-size: 12px; }}
   .date {{ color: #777; font-size: 11px; margin-bottom: 20px; }}
+  .body {{ margin-bottom: 20px; line-height: 1.5; }}
+  .body p {{ margin: 0 0 10px 0; }}
   .caption {{ text-align: center; color: #444; font-size: 11px; margin-top: 4px; }}
   .images-grid {{ width: 100%; }}
 </style>
 </head>
 <body>
-<h1>{title}</h1>
+<h1>{escape(title)}</h1>
 {subtitle_html}
 <p class="date">Data: {today}</p>
+{body_html}
 <div class="images-grid">
 {images_html}
 </div>
@@ -264,6 +327,7 @@ def generate_pdf_report(title: str, images: list, subtitle: str = "",
     html_path = os.path.join(OUTPUT_DIR, f"{output_name}.html")
     pdf_path = os.path.join(OUTPUT_DIR, f"{output_name}.pdf")
 
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     log(f"HTML written: {html_path} ({len(html)//1024}KB)")
@@ -281,7 +345,13 @@ def generate_pdf_report(title: str, images: list, subtitle: str = "",
         f"--print-to-pdf={pdf_path}",
         f"file://{html_path}",
     ]
-    result = subprocess.run(cmd, capture_output=True, timeout=60)
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=CHROMIUM_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"Chromium timed out after {CHROMIUM_TIMEOUT_SECONDS}s — "
+            f"try fewer images or a lower images_per_row"
+        )
     if result.returncode != 0:
         err = result.stderr.decode("utf-8", errors="replace")[:300]
         raise RuntimeError(f"Chromium failed (exit {result.returncode}): {err}")
@@ -325,8 +395,7 @@ def call_tool(name: str, args: dict):
         if not title:
             raise ValueError("title is required")
         images = args.get("images", [])
-        if not images:
-            raise ValueError("images is required and must not be empty")
+        body = args.get("body", "") or ""
 
         subtitle = args.get("subtitle", "")
         output_name = args.get("output_name", "relatorio") or "relatorio"
@@ -336,6 +405,7 @@ def call_tool(name: str, args: dict):
             title=title,
             images=images,
             subtitle=subtitle,
+            body=body,
             output_name=output_name,
             images_per_row=images_per_row,
         )
