@@ -1,9 +1,9 @@
 # Hermes base PINADO no DIGEST que a última imagem de prod usou (build verde de 2026-06-18,
 # run CI 27793975658). NÃO usar `:main` (tag móvel): ela já avançou e o refactor do cron
-# scheduler upstream quebra patch_cron_job_runs/patch_sanitize_cron_errors; e tags antigas
-# (v2026.6.5) são velhas demais p/ patch_whatsapp_boot_deps. Este digest é o único ponto
-# onde TODOS os patches (equipe + MAG) aplicam — é exatamente o Hermes que o runtime de prod
-# já roda (zero mudança de comportamento). Bump de Hermes = trocar o digest + revalidar patches.
+# scheduler upstream quebra patch_cron_job_runs/patch_sanitize_cron_errors. Este digest é o
+# único ponto onde TODOS os patches (equipe + MAG) aplicam — é exatamente o Hermes que o
+# runtime de prod já roda (zero mudança de comportamento). Bump de Hermes = trocar o digest
+# + revalidar patches.
 ARG BASE_IMAGE=nousresearch/hermes-agent@sha256:20c40d8c948254e1167827289b09300a476bae2eddc23a9d4a24bfde4567408e
 FROM ${BASE_IMAGE}
 
@@ -50,12 +50,6 @@ COPY --chown=hermes:hermes mcp/clickup/server.mjs /opt/mag/clickup-mcp/server.mj
 # calling arbitrary HTTP APIs. Enables users to connect any REST API as a knowledge source.
 RUN mkdir -p /opt/mag/custom-proxy-mcp && chown -R hermes:hermes /opt/mag
 COPY --chown=hermes:hermes mcp/custom-proxy/server.mjs /opt/mag/custom-proxy-mcp/server.mjs
-
-# MAG WhatsApp Outbound MCP server (stdio, zero-dependency Node). Exposes send_whatsapp_message
-# tool for proactive messaging with confirmation validation, allowlist checking, and audit logging.
-# The bridge handles WHATSAPP_OUTBOUND_ALLOWED_USERS validation and JID normalization.
-RUN mkdir -p /opt/mag/whatsapp-outbound-mcp && chown -R hermes:hermes /opt/mag
-COPY --chown=hermes:hermes mcp/whatsapp-outbound/server.mjs /opt/mag/whatsapp-outbound-mcp/server.mjs
 
 # ByteRover memory OAuth helper — driven by the control plane (admin "Conectar memória").
 # Talks to the per-tenant brv daemon's transport (startOAuth/awaitOAuthCallback). See header.
@@ -150,99 +144,16 @@ RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/
 # availability allow-list and doesn't know it otherwise). See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_web_extract_free.py
 
-# WhatsApp (Baileys) bridge: stop the silent drops. On loggedOut it re-arms pairing
-# instead of process.exit(1); reconnects with capped backoff; and exposes /qr + /status
-# so the control plane can drive QR pairing from the web. See script header.
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_bridge.py /opt/hermes/bootstrap/patch_whatsapp_bridge.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_bridge.py
-
-# WhatsApp bridge boot fix: don't force npm install on every boot when a usable
-# node_modules tree already exists but predates the dependency stamp. Backfill
-# the stamp automatically and tolerate npm failures when deps are already usable.
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_boot_deps.py /opt/hermes/bootstrap/patch_whatsapp_boot_deps.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_boot_deps.py
-
-# WhatsApp JID normalization: ensure groups use @g.us and DMs use @s.whatsapp.net suffix.
-# Prevents jidDecode failures when users send messages to targets listed without suffix.
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_jid_normalization.py /opt/hermes/bootstrap/patch_whatsapp_jid_normalization.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_jid_normalization.py
-
-# WhatsApp outbound allowlist: enable proactive messaging with separate allowlist and audit.
-# Adds WHATSAPP_OUTBOUND_ALLOWED_USERS (distinct from WHATSAPP_ALLOWED_USERS), normalizes
-# JIDs in /send and /send-media endpoints, validates confirmation flag, and logs all attempts.
-# Must run AFTER jid normalization (depends on normalizeWhatsAppJid function).
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_outbound.py /opt/hermes/bootstrap/patch_whatsapp_outbound.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_outbound.py
-
-# WhatsApp LID allowlist reconciliation: keep the bridge-side LID<->phone mapping
-# compatible across both forward and reverse file formats so inbound allowlists
-# keep working when WhatsApp delivers users as @lid identifiers.
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_lid_allowlist.py /opt/hermes/bootstrap/patch_whatsapp_lid_allowlist.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_lid_allowlist.py
-
-# WhatsApp runtime authorization: preserve the proactive outbound guard while
-# allowing trusted runtime-originated sends (same-chat replies and cron deliveries)
-# to carry an internal system_authorized marker through the adapter/standalone path.
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_adapter_auth.py /opt/hermes/bootstrap/patch_whatsapp_adapter_auth.py
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_cron_auth.py /opt/hermes/bootstrap/patch_whatsapp_cron_auth.py
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_live_reply_auth.py /opt/hermes/bootstrap/patch_whatsapp_live_reply_auth.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_adapter_auth.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_cron_auth.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_live_reply_auth.py
-
-# ACK-wait: faz o /send aguardar confirmação do servidor WA antes de retornar sucesso.
-# Intercepta erros como 463 (RESTRICT_ALL_COMPANIONS) que chegam via pino/messages.update.
-# Condicional a confirmed_by_user=true — replies normais do gateway não são afetados.
-# Deve rodar APÓS todos os patches de auth do bridge.
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_ack_check.py /opt/hermes/bootstrap/patch_whatsapp_ack_check.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_ack_check.py
-
-# Trava de segurança contra "cold reach-out": mandar mensagem pra um contato que nunca
-# trocou mensagem com esse número é a causa nº1 de restrição/bloqueio de conta no
-# WhatsApp. Rastreia histórico de contato (persistido, sobrevive a restart/re-pareamento)
-# e aplica limite diário de contatos novos + espaçamento mínimo + limite diário geral,
-# só para destinos autorizados apenas pelo coringa '*' do outbound allowlist (destinos
-# explícitos continuam sem trava extra). Depende de patch_whatsapp_outbound.py e
-# patch_whatsapp_ack_check.py (roda após ambos).
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_cold_contact_guard.py /opt/hermes/bootstrap/patch_whatsapp_cold_contact_guard.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_cold_contact_guard.py
-
-# Rebrand: muda 'Hermes Agent' → 'MAG - CyriusX' no browser array (nome no pareamento WA)
-# e zera DEFAULT_REPLY_PREFIX para o nome interno não vazar nas mensagens ao cliente.
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_branding.py /opt/hermes/bootstrap/patch_whatsapp_branding.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_branding.py
-
 # MCP server pdf-tools (stdio, Python + pymupdf). Expõe extract_pdf_images e
 # generate_pdf_report ao agente — necessário porque execute_code está desabilitado
 # em canais cliente (WhatsApp/Telegram).
 RUN mkdir -p /opt/mag/pdf-tools-mcp && chown -R hermes:hermes /opt/mag/pdf-tools-mcp
 COPY --chown=hermes:hermes mcp/pdf-tools/server.py /opt/mag/pdf-tools-mcp/server.py
 
-# Bake the WhatsApp bridge deps (Baileys) into the image. Otherwise the bridge runs a
-# slow/fragile ~3-min `npm install` on the FIRST pairing at runtime — which looks like
-# "the QR never generates". Baking it means the first QR is instant for every tenant.
-# GH Actions has sporadic arm64 registry resets while resolving Baileys' transitive git
-# deps; bump npm fetch retries/timeouts so a transient network blip doesn't fail publish.
-RUN cd /opt/hermes/scripts/whatsapp-bridge \
-    && npm install --no-audit --no-fund \
-        --fetch-retries=5 \
-        --fetch-retry-factor=2 \
-        --fetch-retry-mintimeout=20000 \
-        --fetch-retry-maxtimeout=120000 \
-    && chown -R hermes:hermes node_modules
-
-# WhatsApp web pairing: a self-contained pairing module + 4 thin gateway routes
-# (/api/whatsapp/{pair,qr,status,logout}) so the control plane can drive QR pairing.
-# qrcode renders the QR string to a PNG data-URL server-side (Pillow already present).
-COPY --chown=hermes:hermes bootstrap/mag_whatsapp_pairing.py /opt/hermes/gateway/platforms/mag_whatsapp_pairing.py
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_gateway.py /opt/hermes/bootstrap/patch_whatsapp_gateway.py
-RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/python3 qrcode
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_gateway.py
-
 # Telegram pairing approval over HTTP: lets the web approve the pairing code Hermes DMs
 # an un-allowlisted user (delegates to Hermes' own PairingStore). 3 thin gateway routes
-# (/api/telegram/pairing[/approve|/revoke]). Runs AFTER the WhatsApp gateway patch — it
-# anchors on the WhatsApp routes that patch inserts. See script headers.
+# (/api/telegram/pairing[/approve|/revoke]). Anchors directly on the base api_server.py
+# text — independent of any WhatsApp-related patch. See script headers.
 COPY --chown=hermes:hermes bootstrap/mag_telegram_pairing.py /opt/hermes/gateway/platforms/mag_telegram_pairing.py
 COPY --chown=hermes:hermes bootstrap/patch_telegram_gateway.py /opt/hermes/bootstrap/patch_telegram_gateway.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_telegram_gateway.py

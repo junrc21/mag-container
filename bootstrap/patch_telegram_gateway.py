@@ -12,8 +12,9 @@ All the logic lives in the self-contained module mag_telegram_pairing.py (copied
 gateway/platforms/); the api_server only gets one-line wrapper methods that delegate
 there — so we DON'T touch any existing api_server behavior (low risk).
 
-Anchors on the WhatsApp pairing lines that patch_whatsapp_gateway.py already inserted
-(that patch runs first in the Dockerfile), so this is appended right after them.
+Anchors directly on the base api_server.py text (the same anchors the old
+patch_whatsapp_gateway.py used to use, before the Baileys integration was removed) —
+independent of any other WhatsApp-related patch.
 
 Idempotent + fail-loud (mirrors the other bootstrap patches).
 """
@@ -35,17 +36,16 @@ def apply(text: str, old: str, new: str, label: str) -> str:
     if old not in text:
         sys.exit(
             f"FATAL: api_server anchor not found for '{label}'. "
-            f"Upstream api_server.py (or patch_whatsapp_gateway.py) changed — "
-            f"update patch_telegram_gateway.py."
+            f"Upstream api_server.py changed — update patch_telegram_gateway.py."
         )
     print(f"  [ok]   {label}")
     return text.replace(old, new, 1)
 
 
-# --- Edit 1: register the routes (after the WhatsApp logout route) -------------
-OLD_ROUTES = '            self._app.router.add_post("/api/whatsapp/logout", self._mag_wa_logout)\n'
+# --- Edit 1: register the routes (after the chat/completions route) -------------
+OLD_ROUTES = '            self._app.router.add_post("/v1/chat/completions", self._handle_chat_completions)\n'
 NEW_ROUTES = (
-    '            self._app.router.add_post("/api/whatsapp/logout", self._mag_wa_logout)\n'
+    '            self._app.router.add_post("/v1/chat/completions", self._handle_chat_completions)\n'
     "            # _mag_tg_pairing: Telegram access control. Logic in mag_telegram_pairing.py.\n"
     '            self._app.router.add_get("/api/telegram/pairing", self._mag_tg_pairing_list)\n'
     '            self._app.router.add_post("/api/telegram/pairing/approve", self._mag_tg_pairing_approve)\n'
@@ -55,17 +55,12 @@ NEW_ROUTES = (
     '            self._app.router.add_post("/api/telegram/pairing/unblock", self._mag_tg_pairing_unblock)\n'
 )
 
-# --- Edit 2: thin wrapper methods (after the WhatsApp logout wrapper) ----------
+# --- Edit 2: thin wrapper methods (before _handle_models) ----------------------
 OLD_METHODS = (
-    "    async def _mag_wa_logout(self, request):\n"
-    "        from gateway.platforms import mag_whatsapp_pairing as _wa\n"
-    "        return await _wa.handle_logout(request)\n"
+    '    async def _handle_models(self, request: "web.Request") -> "web.Response":\n'
+    '        """GET /v1/models — return hermes-agent as an available model."""\n'
 )
 NEW_METHODS = (
-    "    async def _mag_wa_logout(self, request):\n"
-    "        from gateway.platforms import mag_whatsapp_pairing as _wa\n"
-    "        return await _wa.handle_logout(request)\n"
-    "\n"
     "    async def _mag_tg_pairing_list(self, request):\n"
     "        from gateway.platforms import mag_telegram_pairing as _tg\n"
     "        return await _tg.handle_list(request)\n"
@@ -89,6 +84,9 @@ NEW_METHODS = (
     "    async def _mag_tg_pairing_unblock(self, request):\n"
     "        from gateway.platforms import mag_telegram_pairing as _tg\n"
     "        return await _tg.handle_unblock(request)\n"
+    "\n"
+    '    async def _handle_models(self, request: "web.Request") -> "web.Response":\n'
+    '        """GET /v1/models — return hermes-agent as an available model."""\n'
 )
 
 
