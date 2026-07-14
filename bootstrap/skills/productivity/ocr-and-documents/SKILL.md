@@ -1,21 +1,23 @@
 ---
 name: ocr-and-documents
-description: "Extract text and images from PDFs/scans (pymupdf, tesseract OCR). Includes embedded image extraction and PDF reconstruction with images."
-version: 2.6.0
+description: "Extract text and images from PDFs/scans (pymupdf, tesseract OCR) and from Word/Excel/PowerPoint/plain-text files. Includes embedded image extraction, PDF split/merge/watermark, and PDF reconstruction with images."
+version: 2.7.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
-    tags: [PDF, Documents, Research, Arxiv, Text-Extraction, OCR, Images]
+    tags: [PDF, Documents, Research, Arxiv, Text-Extraction, OCR, Images, DOCX, XLSX, PPTX]
     related_skills: [powerpoint, pdf-generation]
 ---
 
 # PDF & Document Extraction
 
-For DOCX: use `python-docx` (parses actual document structure, far better than OCR).
-For PPTX: see the `powerpoint` skill (uses `python-pptx` with full slide/notes support).
-This skill covers **PDFs and scanned documents**.
+This skill covers **PDFs, scanned documents, Word, Excel, PowerPoint, and plain text files**.
+
+**On client channels (WhatsApp/Telegram): every format below reads through a dedicated `pdf-tools`
+MCP tool, never `execute_code`/raw libraries — see "Word, Excel, PowerPoint & Plain Text" further
+down for docx/xlsx/pptx/txt specifically.**
 
 ## Step 1: Remote URL Available?
 
@@ -61,6 +63,11 @@ channel; there is no equivalent for plain text via `execute_code` there.**
 extract_pdf_text(pdf_path="/opt/data/cache/documents/doc_XXXX.pdf")
 ```
 
+**Long PDF (beyond `max_chars`, default 20000):** don't just raise `max_chars` — page through it
+with `start_page`/`end_page` instead (the response tells you `total_pages`), e.g.
+`extract_pdf_text(pdf_path=..., start_page=16, end_page=30)` to reach the middle of a 60-page
+document. Raising `max_chars` alone still starts from page 1 every time.
+
 **On server/CLI (`execute_code` available):**
 
 ```python
@@ -88,7 +95,10 @@ print(md)
 Use when `page.get_text()` returns empty or very little text — the PDF is image-only/scanned.
 
 **On client channels (WhatsApp/Telegram): `extract_pdf_text` (above) already does this fallback
-automatically per page — nothing extra to call.**
+automatically per page — nothing extra to call. It caps OCR to `max_ocr_pages` per call (default
+15) so one large scanned document can't stall the whole request; if the response says pages were
+OCR-skipped, call again with a narrower `start_page`/`end_page` to reach them (don't just raise the
+cap — a bulky scan is exactly the case it protects against).**
 
 **On server/CLI:**
 
@@ -243,6 +253,46 @@ for page_num, page in enumerate(doc):
 
 ---
 
+## Word, Excel, PowerPoint & Plain Text
+
+These formats hit the exact same `execute_code`-unavailable wall PDFs do on client channels — a
+`.docx`/`.xlsx`/`.pptx` sent in a WhatsApp/Telegram chat has no safe read path without the tools
+below. On server/CLI, the same underlying libraries (`python-docx`/`openpyxl`/`python-pptx`) are
+pre-installed and usable directly via `execute_code` if you need something these tools don't expose.
+
+**Word (.docx):**
+```
+extract_docx_text(docx_path="/opt/data/cache/documents/doc_XXXX.docx")
+```
+Returns paragraphs + tables as text. No fixed "pages" in a .docx file (page breaks aren't reliable
+without rendering) — for a long document, page through with `offset`/`next_offset` instead:
+call again with `offset=<next_offset from the previous response>` to continue.
+
+**Excel (.xlsx):**
+```
+extract_xlsx_text(xlsx_path="/opt/data/cache/documents/doc_XXXX.xlsx")
+extract_xlsx_text(xlsx_path="...", sheet_name="Vendas")   # one specific sheet
+```
+Each sheet becomes a CSV-ish text block. Capped at `max_rows_per_sheet` (default 500) per sheet —
+if a sheet was cut off, target it directly with `sheet_name` rather than raising the row cap on
+every sheet at once.
+
+**PowerPoint (.pptx):**
+```
+extract_pptx_text(pptx_path="/opt/data/cache/documents/doc_XXXX.pptx")
+```
+Returns each slide's text + tables + presenter notes. Page through a long deck with
+`start_slide`/`end_slide`, same idea as `extract_pdf_text`'s page range.
+
+**Plain text (.txt/.csv/.tsv/.json/.md/.yaml/.log/.xml/.html):**
+```
+read_text_file(file_path="/opt/data/cache/documents/doc_XXXX.csv")
+```
+Direct read, capped at 2MB and `max_chars` (default 20000). Don't use this for PDF/Word/Excel/
+PowerPoint or images — each of those has its own dedicated tool above.
+
+---
+
 ## Arxiv Papers
 
 ```
@@ -253,15 +303,28 @@ web_extract(urls=["https://arxiv.org/abs/2402.03300"])
 web_extract(urls=["https://arxiv.org/pdf/2402.03300"])
 ```
 
-## Split, Merge & Search
+## Split, Merge, Watermark & Search
+
+**On client channels (WhatsApp/Telegram): use the `pdf_split`/`pdf_merge`/`pdf_watermark` tools from
+the `pdf-tools` MCP — `execute_code` isn't available there. Search doesn't need its own tool: once
+you have the document's text from `extract_pdf_text`, search within that returned text directly
+instead of re-opening the PDF (only a caveat for documents longer than `max_chars` — page through
+with `start_page`/`end_page` to search sections you haven't pulled yet).**
+
+```
+pdf_split(pdf_path="/opt/data/cache/documents/doc_XXXX.pdf", start_page=1, end_page=5)
+pdf_merge(pdf_paths=["/opt/data/workspace/a.pdf", "/opt/data/workspace/b.pdf"])
+pdf_watermark(pdf_path="/opt/data/workspace/report.pdf", text="CONFIDENCIAL")
+```
+
+**On server/CLI (`execute_code` available):**
 
 ```python
 # Split: extract pages 1-5 to a new PDF
 import pymupdf
 doc = pymupdf.open("report.pdf")
 new = pymupdf.open()
-for i in range(5):
-    new.insert_pdf(doc, from_page=i, to_page=i)
+new.insert_pdf(doc, from_page=0, to_page=4)  # 0-indexed: pages 1-5
 new.save("/opt/data/workspace/pages_1-5.pdf")
 ```
 
@@ -272,6 +335,22 @@ result = pymupdf.open()
 for path in ["a.pdf", "b.pdf", "c.pdf"]:
     result.insert_pdf(pymupdf.open(path))
 result.save("/opt/data/workspace/merged.pdf")
+```
+
+```python
+# Watermark every page — insert_text's own `rotate` only accepts multiples of
+# 90 (rotate=45 raises "bad rotate value"); use `morph` (pivot point + rotation
+# matrix) for a true diagonal stamp.
+import pymupdf
+doc = pymupdf.open("/opt/data/workspace/input.pdf")
+text, fontsize = "CONFIDENCIAL", 48
+length = pymupdf.get_text_length(text, fontsize=fontsize)
+for page in doc:
+    center = pymupdf.Point(page.rect.width / 2, page.rect.height / 2)
+    page.insert_text((page.rect.width / 2 - length / 2, page.rect.height / 2), text,
+                      fontsize=fontsize, color=(0.8, 0, 0), fill_opacity=0.3,
+                      morph=(center, pymupdf.Matrix(45)))
+doc.save("/opt/data/workspace/watermarked.pdf")
 ```
 
 ```python
@@ -288,13 +367,24 @@ for i, page in enumerate(doc):
 
 ## Notes
 
-- **On client channels (WhatsApp/Telegram): read a PDF's text via `extract_pdf_text` (pdf-tools MCP), not `execute_code`/`pymupdf` — `execute_code` isn't available there at all.**
+- **On client channels (WhatsApp/Telegram): read any document via its `pdf-tools` MCP tool** —
+  `extract_pdf_text`/`extract_docx_text`/`extract_xlsx_text`/`extract_pptx_text`/`read_text_file` —
+  never `execute_code`/raw libraries; that toolset isn't available there at all.
+- **Reading a document does NOT save it to long-term memory by itself.** If the content is
+  substantive (data, decisions, numbers, instructions), call `brv_curate` explicitly after
+  extracting it — otherwise a follow-up like "o que aquele relatório dizia?" next week has nothing
+  to recall. See soul.md's "Continuidade" section.
+- **Long document → page through it, don't just raise the char cap.** `extract_pdf_text`/
+  `extract_pptx_text` use `start_page`/`end_page` (or `start_slide`/`end_slide`); `extract_docx_text`
+  uses `offset`/`next_offset`; `extract_xlsx_text` uses `sheet_name`. Raising `max_chars` alone
+  always starts from the beginning again.
 - `web_extract` is always first choice for URLs
 - pymupdf is the safe default — instant, no models, works everywhere
-- **If `page.get_text()` returns empty → the PDF is scanned → use `get_textpage_ocr()`**
+- **If `page.get_text()` returns empty → the PDF is scanned → use `get_textpage_ocr()`** (client
+  channels: `extract_pdf_text` already does this, capped at `max_ocr_pages` per call)
 - **If the PDF has photos/images → use `page.get_images()` + `doc.extract_image()` to get them, then `MEDIA:<path>` to deliver each one**
 - **NEVER use `vision_analyze` on a PDF path** — it only accepts real image files (jpg/png), not PDFs
 - **MEDIA: tag is mandatory** for platform delivery; `print(path)` alone sends nothing to the user
 - marker-pdf is for complex layouts, equations — install only when needed (~3-5GB)
-- For Word docs: `pip install python-docx`
-- For PowerPoint: see the `powerpoint` skill
+- **A password-protected/encrypted PDF is not yet handled specially** — it fails with a generic
+  error (not a "this needs a password" message) on both the client-channel tool and raw pymupdf.

@@ -191,9 +191,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Chromium (above) covers PDF generation via --headless --print-to-pdf.
 # pytesseract + tesseract-ocr (above) enable OCR on scanned/image-only PDFs
 # via pymupdf's page.get_textpage_ocr() — returns empty string without it.
+# python-docx/openpyxl/python-pptx back the pdf-tools MCP's Word/Excel/PowerPoint
+# readers — same "no execute_code on client channels" reasoning as PDF: without a
+# dedicated MCP tool, a .docx/.xlsx/.pptx sent on Telegram/WhatsApp has no safe
+# read path at all.
 RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install \
     --python /opt/hermes/.venv/bin/python3 \
-    pymupdf pymupdf4llm pytesseract
+    pymupdf pymupdf4llm pytesseract python-docx openpyxl python-pptx
 
 # MAG-bundled skills seeded into the tenant volume by entrypoint.sh.
 # Skills live at runtime under /opt/data/skills/ (the tenant volume).

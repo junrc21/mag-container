@@ -1,7 +1,7 @@
 ---
 name: pdf-generation
 description: "Generate PDF files from text, HTML, or data using chromium or pymupdf."
-version: 1.0.0
+version: 1.1.0
 author: MAG
 license: MIT
 platforms: [linux]
@@ -12,7 +12,7 @@ metadata:
 
 # PDF Generation
 
-**On client channels (WhatsApp/Telegram): this skill's raw `/usr/bin/chromium` commands require `execute_code`, which is NOT available there (the toolset is removed on client channels, not just denied — see `ocr-and-documents` skill). Use the `generate_pdf_report` tool from the `pdf-tools` MCP instead — it does the same HTML→chromium conversion server-side, accepts a `body` field for narrative text plus `images` with captions, and works without `execute_code`.**
+**On client channels (WhatsApp/Telegram): this skill's raw `/usr/bin/chromium` commands require `execute_code`, which is NOT available there (the toolset is removed on client channels, not just denied — see `ocr-and-documents` skill). Use the `generate_pdf_report` tool from the `pdf-tools` MCP instead — it does the same HTML→chromium conversion server-side, accepts a `body` field for narrative text plus `images` with captions, and works without `execute_code`. For merging/splitting/watermarking an existing PDF (not generating a new one from scratch), see `ocr-and-documents`'s "Split, Merge, Watermark & Search" section — same MCP, `pdf_split`/`pdf_merge`/`pdf_watermark`.**
 
 **On server/CLI (`execute_code` available):** two approaches depending on the content type:
 
@@ -114,12 +114,19 @@ result.save("/opt/data/workspace/merged.pdf")
 ```
 
 ```python
-# Add text watermark to every page
+# Add text watermark to every page — insert_text's own `rotate` param only accepts
+# multiples of 90 (rotate=45 raises "bad rotate value"); use `morph` (pivot point +
+# rotation matrix) for a true diagonal stamp. On client channels, use the pdf-tools
+# MCP's pdf_watermark tool instead (see the ocr-and-documents skill) — no execute_code needed.
 import pymupdf
 doc = pymupdf.open("/opt/data/workspace/input.pdf")
+text, fontsize = "CONFIDENCIAL", 48
+length = pymupdf.get_text_length(text, fontsize=fontsize)
 for page in doc:
-    page.insert_text((100, 400), "CONFIDENCIAL", fontsize=48,
-                     color=(0.8, 0, 0), rotate=45)
+    center = pymupdf.Point(page.rect.width / 2, page.rect.height / 2)
+    page.insert_text((page.rect.width / 2 - length / 2, page.rect.height / 2), text,
+                      fontsize=fontsize, color=(0.8, 0, 0), fill_opacity=0.3,
+                      morph=(center, pymupdf.Matrix(45)))
 doc.save("/opt/data/workspace/watermarked.pdf")
 ```
 
