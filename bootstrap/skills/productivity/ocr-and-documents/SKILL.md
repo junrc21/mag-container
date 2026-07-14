@@ -1,7 +1,7 @@
 ---
 name: ocr-and-documents
 description: "Extract text and images from PDFs/scans (pymupdf, tesseract OCR). Includes embedded image extraction and PDF reconstruction with images."
-version: 2.5.0
+version: 2.6.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -50,6 +50,19 @@ Only use local extraction when: the file is local, web_extract fails, or you nee
 
 ## pymupdf — Text Extraction
 
+**On client channels (WhatsApp/Telegram): `execute_code` is NOT available (the toolset is removed
+there entirely, not just denied — see the callout under "Extracting Embedded Images" below). Use
+the `extract_pdf_text` tool from the `pdf-tools` MCP instead of the snippets below — it runs this
+same `page.get_text()` extraction server-side, with the OCR fallback from the next section already
+built in, and returns the text directly. This is the ONLY way to read a PDF's text on a client
+channel; there is no equivalent for plain text via `execute_code` there.**
+
+```
+extract_pdf_text(pdf_path="/opt/data/cache/documents/doc_XXXX.pdf")
+```
+
+**On server/CLI (`execute_code` available):**
+
 ```python
 import pymupdf
 
@@ -73,6 +86,11 @@ print(md)
 ## pymupdf — OCR for Scanned PDFs (tesseract installed)
 
 Use when `page.get_text()` returns empty or very little text — the PDF is image-only/scanned.
+
+**On client channels (WhatsApp/Telegram): `extract_pdf_text` (above) already does this fallback
+automatically per page — nothing extra to call.**
+
+**On server/CLI:**
 
 ```python
 import pymupdf
@@ -270,6 +288,7 @@ for i, page in enumerate(doc):
 
 ## Notes
 
+- **On client channels (WhatsApp/Telegram): read a PDF's text via `extract_pdf_text` (pdf-tools MCP), not `execute_code`/`pymupdf` — `execute_code` isn't available there at all.**
 - `web_extract` is always first choice for URLs
 - pymupdf is the safe default — instant, no models, works everywhere
 - **If `page.get_text()` returns empty → the PDF is scanned → use `get_textpage_ocr()`**

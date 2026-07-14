@@ -6,6 +6,7 @@ execute_code on client channels (WhatsApp/Telegram). Only reads/writes files
 within /opt/data — no arbitrary filesystem access.
 
 Tools:
+  extract_pdf_text      — extract plain text from a cached PDF (OCR fallback for scanned pages)
   extract_pdf_images    — extract embedded JPEG/PNG images from a cached PDF
   generate_pdf_report   — create a PDF report with title, date, body text, images and captions
 """
@@ -15,8 +16,13 @@ import os
 import sys
 
 SERVER_NAME = "mag-pdf-tools"
-SERVER_VERSION = "0.3.0"
+SERVER_VERSION = "0.4.0"
 PROTOCOL_VERSION = "2025-06-18"
+
+# Wall-clock-cheap cap on returned text so a huge/many-page PDF can't blow the
+# MCP response or downstream context — the agent can ask for a narrower excerpt
+# (page range in a future version) if the truncated text isn't enough.
+DEFAULT_MAX_TEXT_CHARS = 20000
 
 # Longer side any embedded image is downscaled to before base64-embedding (keeps
 # HTML size + chromium render time bounded for multi-photo reports, e.g. full-res
@@ -49,6 +55,35 @@ def reply_error(id_, code, msg):
 
 
 TOOLS = [
+    {
+        "name": "extract_pdf_text",
+        "description": (
+            "Extrai o texto de um PDF (relatórios, estudos, contratos, artigos) para você ler e "
+            "responder sobre o conteúdo. Tenta o texto nativo do PDF primeiro; se uma página vier "
+            "vazia (PDF escaneado/imagem), cai automaticamente para OCR (português+inglês) nela. "
+            "Este é o único caminho para ler o TEXTO de um PDF em canais de cliente "
+            "(WhatsApp/Telegram) — não depende de execute_code. NÃO use para extrair fotos/figuras "
+            "embutidas (use extract_pdf_images para isso)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pdf_path": {
+                    "type": "string",
+                    "description": (
+                        "Caminho absoluto para o arquivo PDF. "
+                        "Normalmente: /opt/data/cache/documents/doc_<hash>_<nome>.pdf"
+                    ),
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Máximo de caracteres a devolver (padrão: 20000). Reduza se só precisar de um resumo.",
+                    "default": DEFAULT_MAX_TEXT_CHARS,
+                },
+            },
+            "required": ["pdf_path"],
+        },
+    },
     {
         "name": "extract_pdf_images",
         "description": (
@@ -146,6 +181,53 @@ def _safe_path(path: str) -> str:
     if not real.startswith("/opt/data/"):
         raise ValueError(f"Path must be under /opt/data (got: {path})")
     return real
+
+
+def extract_pdf_text(pdf_path: str, max_chars: int = DEFAULT_MAX_TEXT_CHARS):
+    real = _safe_path(pdf_path)
+    if not os.path.isfile(real):
+        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+    try:
+        import pymupdf
+    except ImportError:
+        raise RuntimeError("pymupdf is not installed in this environment")
+
+    doc = pymupdf.open(real)
+    total_pages = doc.page_count
+    page_texts = []
+    ocr_pages = 0
+
+    for page_num, page in enumerate(doc):
+        text = page.get_text().strip()
+        if not text:
+            # Page has no text layer (scanned/image-only) — fall back to OCR,
+            # same logic the ocr-and-documents skill documents for execute_code.
+            try:
+                tp = page.get_textpage_ocr(flags=0, language="por+eng", dpi=300, full=True)
+                text = page.get_text(textpage=tp).strip()
+                if text:
+                    ocr_pages += 1
+            except Exception as e:
+                log(f"  OCR failed on page {page_num + 1}: {e}")
+        if text:
+            page_texts.append(f"--- Página {page_num + 1} ---\n{text}")
+
+    doc.close()
+    log(f"Text extracted from {real}: {len(page_texts)}/{total_pages} pages with text, {ocr_pages} via OCR")
+
+    full_text = "\n\n".join(page_texts)
+    truncated = len(full_text) > max_chars
+    if truncated:
+        full_text = full_text[:max_chars]
+
+    return {
+        "text": full_text,
+        "total_pages": total_pages,
+        "pages_with_text": len(page_texts),
+        "ocr_pages": ocr_pages,
+        "truncated": truncated,
+    }
 
 
 def extract_pdf_images(pdf_path: str, max_images: int = 10, min_size: int = 100):
@@ -365,7 +447,35 @@ def generate_pdf_report(title: str, images: list, subtitle: str = "", body: str 
 
 
 def call_tool(name: str, args: dict):
-    if name == "extract_pdf_images":
+    if name == "extract_pdf_text":
+        pdf_path = args.get("pdf_path", "")
+        if not pdf_path:
+            raise ValueError("pdf_path is required")
+
+        max_chars = int(args.get("max_chars") or DEFAULT_MAX_TEXT_CHARS)
+        result = extract_pdf_text(pdf_path, max_chars=max_chars)
+
+        if not result["text"].strip():
+            return (
+                f"Não encontrei texto legível neste PDF ({result['total_pages']} página(s)) — "
+                "nem no texto nativo nem via OCR. Pode estar protegido, corrompido, ou ser um "
+                "escaneado de qualidade muito baixa."
+            )
+
+        header = f"Texto extraído de {result['pages_with_text']}/{result['total_pages']} página(s)"
+        if result["ocr_pages"]:
+            header += f" ({result['ocr_pages']} via OCR)"
+        header += ":\n\n"
+
+        footer = ""
+        if result["truncated"]:
+            footer = (
+                f"\n\n[texto truncado em {max_chars} caracteres — peça um max_chars maior "
+                "se precisar do restante]"
+            )
+        return header + result["text"] + footer
+
+    elif name == "extract_pdf_images":
         pdf_path = args.get("pdf_path", "")
         if not pdf_path:
             raise ValueError("pdf_path is required")
