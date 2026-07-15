@@ -27,6 +27,7 @@ COPY --chown=hermes:hermes bootstrap/patch_aux_usage_ledger.py /opt/hermes/boots
 COPY --chown=hermes:hermes bootstrap/mag_turn_ledger.py /opt/hermes/agent/mag_turn_ledger.py
 COPY --chown=hermes:hermes bootstrap/patch_toolsets_used.py /opt/hermes/bootstrap/patch_toolsets_used.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
+COPY --chown=hermes:hermes bootstrap/patch_credit_warning.py /opt/hermes/bootstrap/patch_credit_warning.py
 COPY --chown=hermes:hermes bootstrap/patch_forbidden_topics_gate.py /opt/hermes/bootstrap/patch_forbidden_topics_gate.py
 COPY --chown=hermes:hermes bootstrap/patch_cron_job_runs.py /opt/hermes/bootstrap/patch_cron_job_runs.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_code_exec.py /opt/hermes/bootstrap/patch_disable_channel_code_exec.py
@@ -108,6 +109,10 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_toolsets_used.py
 # Credit hard cap (Fase 2): block client-channel turns before the agent runs when
 # the tenant is out of credits, with a humane message. See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_hardcap.py
+
+# Credit warning (Fase 2): append an 80%-of-quota heads-up to the tenant's own
+# reply for that turn (never a separate/proactive push). See script header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_warning.py
 
 # Restricted topics: block tenant-defined sensitive themes on client channels
 # before the model runs, unless the sender is explicitly allowlisted for that

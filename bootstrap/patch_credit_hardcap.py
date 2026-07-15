@@ -32,8 +32,9 @@ _MAG_CREDIT_LIMIT_MSG_FREE = (
 )
 _MAG_CREDIT_LIMIT_MSG_PAID = (
     "Você atingiu o limite de créditos do seu plano este mês. "
-    "Seus créditos renovam automaticamente no próximo ciclo. "
-    "Fale com o suporte da CyriusX para liberar mais antes disso."
+    "Para continuar agora, reforce seus créditos ou faça upgrade em Uso e Plano "
+    "no painel de controle. Se preferir, seus créditos renovam sozinhos no "
+    "próximo ciclo."
 )
 
 
