@@ -38,15 +38,27 @@ launch, so the service-to-service key is never written to a file.
 
 ## Tools
 
-`google_list_accounts`, `gmail_search`, `gmail_get_message`, `gmail_send`,
-`drive_search`, `drive_get_file`, `drive_create_file`, `drive_update_file`,
-`drive_delete_file` (trash, reversible), `calendar_list_events`, `calendar_create_event`.
+- **Accounts**: `google_list_accounts`
+- **Gmail**: `gmail_search`, `gmail_get_message` (includes attachment metadata),
+  `gmail_get_attachment` (downloads to the tenant workspace for `MEDIA:` delivery),
+  `gmail_send` (optional attachments via `attachmentPaths`), `gmail_create_draft`,
+  `gmail_list_drafts`, `gmail_create_label`, `gmail_update_message` (read/unread,
+  star, archive, apply/remove a label)
+- **Drive**: `drive_search`, `drive_get_file`, `drive_create_file`,
+  `drive_update_file`, `drive_delete_file` (trash, reversible), `drive_share_file`
+  (invite by email and/or an anyone-with-link), `drive_copy_file`
+- **Calendar**: `calendar_list_calendars`, `calendar_list_events`,
+  `calendar_create_event` (optional `recurrence` RRULE), `calendar_update_event`
+  (partial update, optional `recurrence`)
 
-Drive has full CRUD for plain/binary files (create/read/update/delete). It cannot
-edit the *content* of a native Google Docs/Sheets/Slides file (Drive's media-upload
-endpoint only replaces raw bytes; editing a native doc needs the separate Docs/Sheets
-API, not implemented here) — `drive_update_file` can still rename one. Gmail and
-Calendar only have create (send / create event) — no update/delete yet.
+Drive has full CRUD for plain/binary files (create/read/update/delete/share/copy).
+It cannot edit the *content* of a native Google Docs/Sheets/Slides file (Drive's
+media-upload endpoint only replaces raw bytes; editing a native doc needs the
+separate Docs/Sheets API, not implemented here) — `drive_update_file` can still
+rename one. Binary attachment/file downloads follow the same `MEDIA:<path>`
+convention as `pdf-tools-mcp`: the file is written to `/opt/data/workspace/google`
+and the tool tells the agent to include a `MEDIA:` line in its own reply so the
+channel adapter delivers it as a real attachment.
 
 ## Test locally
 

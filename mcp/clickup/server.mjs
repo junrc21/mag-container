@@ -11,7 +11,7 @@
 import { createInterface } from 'node:readline';
 
 const SERVER_NAME = 'mag-clickup';
-const SERVER_VERSION = '0.1.0';
+const SERVER_VERSION = '0.2.0';
 const PROTOCOL_VERSION = '2025-06-18';
 
 const MAG_API_URL = (process.env.MAG_API_URL || '').replace(/\/$/, '');
@@ -84,6 +84,28 @@ function taskBrief(t) {
   };
 }
 
+// ClickUp's "Get Authorized Teams" response embeds each team's members —
+// no separate list-members endpoint is needed.
+async function workspaceMembers() {
+  const c = await ctx();
+  const t = await cu('/team');
+  const team = (t.teams || []).find((x) => x.id === c.teamId);
+  return (team?.members || []).map((m) => m.user).filter(Boolean);
+}
+
+async function resolveMemberId(nameOrEmail) {
+  const members = await workspaceMembers();
+  const q = String(nameOrEmail).toLowerCase();
+  const found =
+    members.find((u) => (u.email || '').toLowerCase() === q) ||
+    members.find((u) => (u.username || '').toLowerCase() === q) ||
+    members.find((u) => (u.username || '').toLowerCase().includes(q));
+  if (!found) {
+    throw new Error(`Pessoa "${nameOrEmail}" não encontrada no ClickUp. Use clickup_list_members pra ver quem está disponível.`);
+  }
+  return found.id;
+}
+
 // ── tools ───────────────────────────────────────────────────────────────────
 const tools = {
   clickup_me: {
@@ -121,6 +143,17 @@ const tools = {
       }
       const out = tasks.slice(0, n).map(taskBrief);
       return out.length ? out : 'Nenhuma tarefa encontrada.';
+    },
+  },
+
+  clickup_list_members: {
+    description: 'Lista os membros do workspace ClickUp (nome, e-mail, id) — use pra saber pra quem atribuir uma tarefa (clickup_create_task/clickup_update_task).',
+    inputSchema: { type: 'object', properties: {} },
+    async run() {
+      const members = await workspaceMembers();
+      return members.length
+        ? members.map((u) => ({ id: u.id, username: u.username, email: u.email }))
+        : 'Nenhum membro encontrado.';
     },
   },
 
@@ -191,6 +224,8 @@ const tools = {
         status: { type: 'string', description: 'Nome do status (opcional).' },
         priority: { type: 'number', description: '1=urgente,2=alta,3=normal,4=baixa.' },
         assignToMe: { type: 'boolean' },
+        assignee: { type: 'string', description: 'Nome ou e-mail de quem atribuir (ver clickup_list_members). Alternativa a assignToMe.' },
+        dueDate: { type: 'string', description: 'Data de vencimento, formato YYYY-MM-DD.' },
       },
       required: ['listId', 'name'],
     },
@@ -199,14 +234,22 @@ const tools = {
       if (args.description) body.description = args.description;
       if (args.status) body.status = args.status;
       if (typeof args.priority === 'number') body.priority = args.priority;
-      if (args.assignToMe) body.assignees = [(await ctx()).userId];
+      if (args.dueDate) {
+        body.due_date = new Date(args.dueDate).getTime();
+        body.due_date_time = false;
+      }
+      if (args.assignee) {
+        body.assignees = [await resolveMemberId(args.assignee)];
+      } else if (args.assignToMe) {
+        body.assignees = [(await ctx()).userId];
+      }
       const t = await cu(`/list/${encodeURIComponent(args.listId)}/task`, { method: 'POST', body });
       return `Tarefa criada: ${t.name} (${t.id}) — ${t.url}`;
     },
   },
 
   clickup_update_task: {
-    description: 'Atualiza uma tarefa do ClickUp (status, nome, descrição, prioridade). Ação que escreve.',
+    description: 'Atualiza uma tarefa do ClickUp (status, nome, descrição, prioridade, responsável, vencimento). Ação que escreve.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -215,6 +258,8 @@ const tools = {
         name: { type: 'string' },
         description: { type: 'string' },
         priority: { type: 'number' },
+        assignee: { type: 'string', description: 'Nome ou e-mail de quem atribuir (ver clickup_list_members).' },
+        dueDate: { type: 'string', description: 'Data de vencimento, formato YYYY-MM-DD.' },
       },
       required: ['taskId'],
     },
@@ -224,9 +269,29 @@ const tools = {
       if (args.name) body.name = args.name;
       if (args.description) body.description = args.description;
       if (typeof args.priority === 'number') body.priority = args.priority;
+      if (args.dueDate) {
+        body.due_date = new Date(args.dueDate).getTime();
+        body.due_date_time = false;
+      }
+      if (args.assignee) {
+        body.assignees = { add: [await resolveMemberId(args.assignee)] };
+      }
       if (Object.keys(body).length === 0) throw new Error('Nada para atualizar.');
       const t = await cu(`/task/${encodeURIComponent(args.taskId)}`, { method: 'PUT', body });
       return `Tarefa ${t.id} atualizada (status: ${t.status?.status}).`;
+    },
+  },
+
+  clickup_delete_task: {
+    description: 'Move uma tarefa do ClickUp para a lixeira (reversível lá por um tempo — não é uma exclusão permanente). Ação que escreve — confirme com o usuário antes.',
+    inputSchema: {
+      type: 'object',
+      properties: { taskId: { type: 'string' } },
+      required: ['taskId'],
+    },
+    async run(args) {
+      await cu(`/task/${encodeURIComponent(args.taskId)}`, { method: 'DELETE' });
+      return 'Tarefa movida para a lixeira do ClickUp.';
     },
   },
 

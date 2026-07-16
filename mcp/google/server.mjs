@@ -16,9 +16,11 @@
 // Protocol: MCP over stdio = newline-delimited JSON-RPC 2.0.
 
 import { createInterface } from 'node:readline';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 const SERVER_NAME = 'mag-google';
-const SERVER_VERSION = '0.2.0';
+const SERVER_VERSION = '0.3.0';
 const PROTOCOL_VERSION = '2025-06-18';
 
 const MAG_API_URL = (process.env.MAG_API_URL || '').replace(/\/$/, '');
@@ -30,6 +32,34 @@ const DRIVE = 'https://www.googleapis.com/drive/v3';
 const CALENDAR = 'https://www.googleapis.com/calendar/v3';
 
 const MAX_TEXT = 12000; // cap any single tool result body
+
+// Same convention pdf-tools-mcp uses: write the file into the tenant's workspace
+// (bind-mounted, readable by the gateway) and tell the agent to include a
+// MEDIA:<path> line in its own reply — the channel adapter scans the agent's
+// final text for that marker and delivers the file as a real attachment.
+const WORKSPACE_DIR = '/opt/data/workspace/google';
+
+const EXT_MIME_TYPES = {
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.txt': 'text/plain',
+  '.csv': 'text/csv',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.zip': 'application/zip',
+};
+
+function mimeTypeFor(filePath) {
+  return EXT_MIME_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
+}
 
 function log(...args) {
   process.stderr.write(`[mag-google] ${args.join(' ')}\n`);
@@ -147,6 +177,14 @@ function b64urlDecode(data) {
   return Buffer.from(String(data).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
 }
 
+// Same base64url alphabet fixup as b64urlDecode, but returns the raw Buffer
+// instead of a UTF-8 string — required for binary attachment bytes (a PDF/image
+// decoded through toString('utf8') would be corrupted).
+function b64urlDecodeBuffer(data) {
+  if (!data) return Buffer.alloc(0);
+  return Buffer.from(String(data).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+}
+
 function b64urlEncode(str) {
   return Buffer.from(str, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
@@ -167,6 +205,58 @@ function extractPlainText(payload) {
   }
   if (payload.body?.data) return b64urlDecode(payload.body.data);
   return '';
+}
+
+// Walks a message's MIME tree collecting every part that IS an attachment
+// (has a filename and a body.attachmentId — inline text/html parts have neither).
+function extractAttachments(payload) {
+  const out = [];
+  function walk(part) {
+    if (!part) return;
+    if (part.filename && part.body?.attachmentId) {
+      out.push({ filename: part.filename, attachmentId: part.body.attachmentId, mimeType: part.mimeType, size: part.body.size });
+    }
+    if (part.parts) part.parts.forEach(walk);
+  }
+  walk(payload);
+  return out;
+}
+
+async function gmailFindLabelId(token, name) {
+  const data = await gfetch(token, `${GMAIL}/labels`);
+  const found = (data.labels || []).find((l) => l.name.toLowerCase() === String(name).toLowerCase());
+  if (!found) {
+    throw new Error(`Label "${name}" não encontrada. Labels existentes: ${(data.labels || []).map((l) => l.name).join(', ')}`);
+  }
+  return found.id;
+}
+
+// Builds a raw RFC 2822 message. With no attachments it's a single text/plain
+// body (original gmail_send behavior); with attachments it becomes a
+// multipart/mixed message — one text part + one base64 part per attachment.
+function buildMimeMessage({ from, to, cc, subject, body, attachments }) {
+  const headers = [`From: ${from}`, `To: ${to}`];
+  if (cc) headers.push(`Cc: ${cc}`);
+  headers.push(`Subject: ${subject}`, 'MIME-Version: 1.0');
+
+  if (!attachments || !attachments.length) {
+    headers.push('Content-Type: text/plain; charset="UTF-8"');
+    return `${headers.join('\r\n')}\r\n\r\n${body}`;
+  }
+
+  const boundary = `mag-mime-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+  let msg = `${headers.join('\r\n')}\r\n\r\n--${boundary}\r\nContent-Type: text/plain; charset="UTF-8"\r\n\r\n${body}\r\n\r\n`;
+  for (const att of attachments) {
+    msg +=
+      `--${boundary}\r\n` +
+      `Content-Type: ${att.mimeType}; name="${att.filename}"\r\n` +
+      `Content-Disposition: attachment; filename="${att.filename}"\r\n` +
+      `Content-Transfer-Encoding: base64\r\n\r\n` +
+      `${att.content.toString('base64')}\r\n\r\n`;
+  }
+  msg += `--${boundary}--`;
+  return msg;
 }
 
 // ── Tool implementations ───────────────────────────────────────────────────
@@ -223,18 +313,49 @@ const tools = {
       const { token } = await resolveToken(args.account);
       const msg = await gfetch(token, `${GMAIL}/messages/${encodeURIComponent(args.id)}?format=full`);
       const h = msg.payload?.headers;
+      const attachments = extractAttachments(msg.payload);
       return {
         from: gmailHeader(h, 'From'),
         to: gmailHeader(h, 'To'),
         subject: gmailHeader(h, 'Subject'),
         date: gmailHeader(h, 'Date'),
         body: truncate(extractPlainText(msg.payload) || msg.snippet || ''),
+        attachments: attachments.length
+          ? attachments
+          : undefined, // omit the field entirely when there are none, cleaner for the model
       };
     },
   },
 
+  gmail_get_attachment: {
+    description: 'Baixa um anexo de e-mail (pelo messageId + attachmentId de gmail_get_message) e salva no workspace do tenant. Inclua uma linha MEDIA:<caminho> na sua resposta pra entregar o arquivo ao usuário no chat.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string' },
+        messageId: { type: 'string', description: 'ID da mensagem (ver gmail_search/gmail_get_message).' },
+        attachmentId: { type: 'string', description: 'ID do anexo (ver gmail_get_message.attachments).' },
+        filename: { type: 'string', description: 'Nome do arquivo a salvar (ver gmail_get_message.attachments).' },
+      },
+      required: ['messageId', 'attachmentId', 'filename'],
+    },
+    async run(args) {
+      const { token } = await resolveToken(args.account);
+      const data = await gfetch(
+        token,
+        `${GMAIL}/messages/${encodeURIComponent(args.messageId)}/attachments/${encodeURIComponent(args.attachmentId)}`,
+      );
+      const buf = b64urlDecodeBuffer(data.data);
+      await mkdir(WORKSPACE_DIR, { recursive: true });
+      const safeName = String(args.filename).replace(/[/\\]/g, '_');
+      const outPath = path.join(WORKSPACE_DIR, `${Date.now()}-${safeName}`);
+      await writeFile(outPath, buf);
+      return `Anexo salvo. Para enviar ao usuário, inclua na sua resposta:\nMEDIA:${outPath}`;
+    },
+  },
+
   gmail_send: {
-    description: 'Envia um e-mail a partir da conta Google. ATENÇÃO: ação que escreve — confirme com o usuário antes.',
+    description: 'Envia um e-mail a partir da conta Google, opcionalmente com anexos (arquivos já no workspace do tenant). ATENÇÃO: ação que escreve — confirme com o usuário antes.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -243,15 +364,21 @@ const tools = {
         subject: { type: 'string' },
         body: { type: 'string', description: 'Corpo do e-mail (texto).' },
         cc: { type: 'string' },
+        attachmentPaths: { type: 'array', items: { type: 'string' }, description: 'Caminhos de arquivo (ex.: /opt/data/workspace/...) pra anexar.' },
       },
       required: ['to', 'subject', 'body'],
     },
     async run(args) {
       const { token, email } = await resolveToken(args.account);
-      const headers = [`From: ${email}`, `To: ${args.to}`];
-      if (args.cc) headers.push(`Cc: ${args.cc}`);
-      headers.push(`Subject: ${args.subject}`, 'Content-Type: text/plain; charset="UTF-8"', 'MIME-Version: 1.0');
-      const raw = b64urlEncode(`${headers.join('\r\n')}\r\n\r\n${args.body}`);
+      let attachments;
+      if (args.attachmentPaths?.length) {
+        attachments = [];
+        for (const p of args.attachmentPaths) {
+          const content = await readFile(p);
+          attachments.push({ filename: path.basename(p), mimeType: mimeTypeFor(p), content });
+        }
+      }
+      const raw = b64urlEncode(buildMimeMessage({ from: email, to: args.to, cc: args.cc, subject: args.subject, body: args.body, attachments }));
       const res = await gfetch(token, `${GMAIL}/messages/send`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -261,8 +388,72 @@ const tools = {
     },
   },
 
+  gmail_create_draft: {
+    description: 'Cria um rascunho de e-mail (não envia — fica salvo no Gmail pra revisão/envio manual depois).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string' },
+        to: { type: 'string' },
+        subject: { type: 'string' },
+        body: { type: 'string' },
+        cc: { type: 'string' },
+      },
+      required: ['to', 'subject', 'body'],
+    },
+    async run(args) {
+      const { token, email } = await resolveToken(args.account);
+      const raw = b64urlEncode(buildMimeMessage({ from: email, to: args.to, cc: args.cc, subject: args.subject, body: args.body }));
+      const res = await gfetch(token, `${GMAIL}/drafts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: { raw } }),
+      });
+      return `Rascunho criado (id ${res.id}).`;
+    },
+  },
+
+  gmail_list_drafts: {
+    description: 'Lista os rascunhos de e-mail salvos (destinatário e assunto).',
+    inputSchema: {
+      type: 'object',
+      properties: { account: { type: 'string' }, maxResults: { type: 'number', description: 'Padrão 10.' } },
+    },
+    async run(args) {
+      const { token } = await resolveToken(args.account);
+      const max = Math.min(args.maxResults || 10, 25);
+      const list = await gfetch(token, `${GMAIL}/drafts?maxResults=${max}`);
+      const ids = (list.drafts || []).map((d) => d.id);
+      const out = [];
+      for (const id of ids) {
+        const d = await gfetch(token, `${GMAIL}/drafts/${id}?format=metadata&metadataHeaders=To&metadataHeaders=Subject`);
+        const h = d.message?.payload?.headers;
+        out.push({ id, to: gmailHeader(h, 'To'), subject: gmailHeader(h, 'Subject'), snippet: d.message?.snippet });
+      }
+      return out.length ? out : 'Nenhum rascunho encontrado.';
+    },
+  },
+
+  gmail_create_label: {
+    description: 'Cria uma label (etiqueta) personalizada no Gmail. Depois use gmail_update_message com addLabel pra aplicá-la a um e-mail.',
+    inputSchema: {
+      type: 'object',
+      properties: { account: { type: 'string' }, name: { type: 'string', description: 'Nome da label.' } },
+      required: ['name'],
+    },
+    async run(args) {
+      const { token } = await resolveToken(args.account);
+      const label = await gfetch(token, `${GMAIL}/labels`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: args.name, labelListVisibility: 'labelShow', messageListVisibility: 'show' }),
+      });
+      return { id: label.id, name: label.name };
+    },
+  },
+
   gmail_update_message: {
-    description: 'Atualiza o estado de um e-mail existente: marca como lido/não lido, favorita/desfavorita, e/ou arquiva (sai da caixa de entrada, continua acessível) / volta pra caixa de entrada. Informe só os campos que quer mudar. Ação que escreve — confirme com o usuário antes.',
+    description: 'Atualiza o estado de um e-mail existente: marca como lido/não lido, favorita/desfavorita, arquiva/desarquiva, e/ou aplica/remove uma label personalizada (deve já existir — ver gmail_create_label). Informe só os campos que quer mudar. Ação que escreve — confirme com o usuário antes.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -271,12 +462,20 @@ const tools = {
         markRead: { type: 'boolean', description: 'true = marca como lido, false = marca como não lido.' },
         star: { type: 'boolean', description: 'true = favorita, false = remove o favorito.' },
         archive: { type: 'boolean', description: 'true = arquiva (remove da caixa de entrada), false = volta pra caixa de entrada.' },
+        addLabel: { type: 'string', description: 'Nome de uma label existente pra aplicar.' },
+        removeLabel: { type: 'string', description: 'Nome de uma label existente pra remover.' },
       },
       required: ['id'],
     },
     async run(args) {
-      if (args.markRead === undefined && args.star === undefined && args.archive === undefined) {
-        throw new Error('Informe ao menos um de: markRead, star, archive.');
+      if (
+        args.markRead === undefined &&
+        args.star === undefined &&
+        args.archive === undefined &&
+        !args.addLabel &&
+        !args.removeLabel
+      ) {
+        throw new Error('Informe ao menos um de: markRead, star, archive, addLabel, removeLabel.');
       }
       const { token } = await resolveToken(args.account);
       const addLabelIds = [];
@@ -287,6 +486,8 @@ const tools = {
       if (args.star === false) removeLabelIds.push('STARRED');
       if (args.archive === true) removeLabelIds.push('INBOX');
       if (args.archive === false) addLabelIds.push('INBOX');
+      if (args.addLabel) addLabelIds.push(await gmailFindLabelId(token, args.addLabel));
+      if (args.removeLabel) removeLabelIds.push(await gmailFindLabelId(token, args.removeLabel));
       const msg = await gfetch(
         token,
         `${GMAIL}/messages/${encodeURIComponent(args.id)}/modify`,
@@ -453,6 +654,86 @@ const tools = {
     },
   },
 
+  drive_share_file: {
+    description: 'Compartilha um arquivo do Google Drive — com uma pessoa específica (por e-mail) e/ou gera um link acessível a qualquer um que o tiver. Informe "email" e/ou "anyoneWithLink":true (pelo menos um dos dois). Ação que escreve — confirme com o usuário antes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string' },
+        fileId: { type: 'string' },
+        email: { type: 'string', description: 'E-mail da pessoa pra compartilhar diretamente.' },
+        role: { type: 'string', description: '"reader" (só vê), "commenter" ou "writer" (edita). Padrão "reader".' },
+        anyoneWithLink: { type: 'boolean', description: 'Se true, cria um link acessível a qualquer pessoa que o tiver (sem precisar estar logada).' },
+        notify: { type: 'boolean', description: 'Se true (padrão), avisa a pessoa por e-mail ao compartilhar diretamente.' },
+      },
+      required: ['fileId'],
+    },
+    async run(args) {
+      if (!args.email && !args.anyoneWithLink) {
+        throw new Error('Informe "email" (compartilhar com uma pessoa) e/ou "anyoneWithLink": true (link público) — pelo menos um dos dois.');
+      }
+      const { token } = await resolveToken(args.account);
+      const role = args.role || 'reader';
+      const result = {};
+      if (args.email) {
+        const notify = args.notify !== false;
+        const perm = await gfetch(
+          token,
+          `${DRIVE}/files/${encodeURIComponent(args.fileId)}/permissions?sendNotificationEmail=${notify}&supportsAllDrives=true`,
+          { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ role, type: 'user', emailAddress: args.email }) },
+        );
+        result.sharedWith = { email: args.email, role, permissionId: perm.id };
+      }
+      if (args.anyoneWithLink) {
+        await gfetch(
+          token,
+          `${DRIVE}/files/${encodeURIComponent(args.fileId)}/permissions?supportsAllDrives=true`,
+          { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ role: 'reader', type: 'anyone' }) },
+        );
+      }
+      const meta = await gfetch(token, `${DRIVE}/files/${encodeURIComponent(args.fileId)}?fields=webViewLink&supportsAllDrives=true`);
+      result.link = meta.webViewLink;
+      return result;
+    },
+  },
+
+  drive_copy_file: {
+    description: 'Duplica um arquivo no Google Drive, opcionalmente com novo nome e/ou pasta de destino. Ação que escreve — confirme com o usuário antes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string' },
+        fileId: { type: 'string' },
+        name: { type: 'string', description: 'Nome da cópia (padrão: Drive gera "Cópia de <original>").' },
+        parentFolderId: { type: 'string', description: 'ID da pasta de destino (opcional).' },
+      },
+      required: ['fileId'],
+    },
+    async run(args) {
+      const { token } = await resolveToken(args.account);
+      const body = {};
+      if (args.name) body.name = args.name;
+      if (args.parentFolderId) body.parents = [args.parentFolderId];
+      const file = await gfetch(
+        token,
+        `${DRIVE}/files/${encodeURIComponent(args.fileId)}/copy?supportsAllDrives=true&fields=${encodeURIComponent('id,name,webViewLink')}`,
+        { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+      );
+      return { id: file.id, name: file.name, webViewLink: file.webViewLink };
+    },
+  },
+
+  calendar_list_calendars: {
+    description: 'Lista todas as agendas (calendários) que essa conta Google tem acesso — não só a principal. Use pra descobrir o calendarId de uma agenda específica antes de listar/criar/atualizar eventos nela.',
+    inputSchema: { type: 'object', properties: { account: { type: 'string' } } },
+    async run(args) {
+      const { token } = await resolveToken(args.account);
+      const data = await gfetch(token, `${CALENDAR}/users/me/calendarList`);
+      const cals = (data.items || []).map((c) => ({ id: c.id, summary: c.summary, primary: !!c.primary, accessRole: c.accessRole }));
+      return cals.length ? cals : 'Nenhuma agenda encontrada.';
+    },
+  },
+
   calendar_list_events: {
     description: 'Lista eventos da agenda (Google Calendar) num intervalo. Útil para reuniões/Meet.',
     inputSchema: {
@@ -502,6 +783,11 @@ const tools = {
         attendees: { type: 'array', items: { type: 'string' }, description: 'E-mails dos convidados.' },
         addMeet: { type: 'boolean', description: 'Se true, cria link do Google Meet.' },
         calendarId: { type: 'string' },
+        recurrence: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Regra(s) de recorrência no formato RRULE (RFC 5545), ex.: ["RRULE:FREQ=WEEKLY;BYDAY=MO"] pra toda segunda-feira, ["RRULE:FREQ=DAILY;COUNT=5"] pra 5 dias seguidos. Omita pra um evento único.',
+        },
       },
       required: ['summary', 'start', 'end'],
     },
@@ -513,6 +799,7 @@ const tools = {
         description: args.description,
         start: { dateTime: args.start },
         end: { dateTime: args.end },
+        ...(args.recurrence?.length ? { recurrence: args.recurrence } : {}),
       };
       const params = new URLSearchParams();
       if (args.attendees?.length) {
@@ -549,6 +836,11 @@ const tools = {
         start: { type: 'string', description: 'ISO8601 do novo horário de início.' },
         end: { type: 'string', description: 'ISO8601 do novo horário de fim.' },
         attendees: { type: 'array', items: { type: 'string' }, description: 'Substitui a lista de convidados por essa (e-mails).' },
+        recurrence: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Substitui a regra de recorrência (RRULE, RFC 5545). Envie um array vazio [] pra tornar o evento único de novo.',
+        },
       },
       required: ['eventId'],
     },
@@ -559,8 +851,9 @@ const tools = {
       if (args.start !== undefined) body.start = { dateTime: args.start };
       if (args.end !== undefined) body.end = { dateTime: args.end };
       if (args.attendees !== undefined) body.attendees = args.attendees.map((email) => ({ email }));
+      if (args.recurrence !== undefined) body.recurrence = args.recurrence;
       if (!Object.keys(body).length) {
-        throw new Error('Informe ao menos um campo pra atualizar (summary, description, start, end, attendees).');
+        throw new Error('Informe ao menos um campo pra atualizar (summary, description, start, end, attendees, recurrence).');
       }
       const { token } = await resolveToken(args.account);
       const cal = encodeURIComponent(args.calendarId || 'primary');

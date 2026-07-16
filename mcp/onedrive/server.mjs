@@ -7,9 +7,11 @@
 // internal MAG OneDrive endpoints.
 
 import { createInterface } from 'node:readline';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 const SERVER_NAME = 'mag-onedrive';
-const SERVER_VERSION = '0.1.0';
+const SERVER_VERSION = '0.2.0';
 const PROTOCOL_VERSION = '2025-06-18';
 
 const MAG_API_URL = (process.env.MAG_API_URL || '').replace(/\/$/, '');
@@ -17,6 +19,11 @@ const MAG_INTERNAL_KEY = process.env.MAG_INTERNAL_KEY || '';
 const MAG_TENANT_ID = process.env.MAG_TENANT_ID || '';
 
 const MAX_TEXT = 12000;
+
+// Same convention as the google MCP server: binary content gets written into the
+// tenant's workspace and the tool tells the agent to include a MEDIA:<path> line
+// in its own reply, which the channel adapter turns into a real attachment.
+const WORKSPACE_DIR = '/opt/data/workspace/onedrive';
 
 function log(...args) {
   process.stderr.write(`[mag-onedrive] ${args.join(' ')}\n`);
@@ -230,6 +237,134 @@ const tools = {
           accountId: account.id,
           ...(args.content !== undefined ? { content: String(args.content) } : {}),
           ...(args.name ? { name: String(args.name) } : {}),
+        }),
+      });
+    },
+  },
+
+  onedrive_get_document_content: {
+    description: 'Le o conteudo de um arquivo especifico do OneDrive (pelo id, ver onedrive_list_documents/onedrive_search_documents). Arquivos de texto vem prontos pra ler; arquivos binarios (PDF, imagem, etc.) sao salvos no workspace do tenant - inclua uma linha MEDIA:<caminho> na sua resposta pra entregar o arquivo ao usuario no chat.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'E-mail ou parte do e-mail da conta OneDrive.' },
+        fileId: { type: 'string', description: 'Id do arquivo.' },
+      },
+      required: ['fileId'],
+    },
+    async run(args) {
+      const account = await resolveAccount(args.account);
+      const query = new URLSearchParams({ tenantId: MAG_TENANT_ID, accountId: account.id });
+      const result = await magFetch(`/internal/onedrive/documents/${encodeURIComponent(args.fileId)}/content?${query.toString()}`);
+      if (result.isText) {
+        return { id: result.id, name: result.name, mimeType: result.mimeType, content: result.content };
+      }
+      const buf = Buffer.from(result.content, 'base64');
+      await mkdir(WORKSPACE_DIR, { recursive: true });
+      const safeName = String(result.name).replace(/[/\\]/g, '_');
+      const outPath = path.join(WORKSPACE_DIR, `${Date.now()}-${safeName}`);
+      await writeFile(outPath, buf);
+      return `Arquivo binario salvo. Para enviar ao usuario, inclua na sua resposta:\nMEDIA:${outPath}`;
+    },
+  },
+
+  onedrive_share_document: {
+    description: 'Compartilha um arquivo do OneDrive - com uma pessoa especifica (por e-mail) e/ou gera um link acessivel a qualquer um que o tiver. Informe "email" e/ou "anyoneWithLink":true. Acao de escrita - confirme com o usuario antes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string' },
+        fileId: { type: 'string' },
+        email: { type: 'string', description: 'E-mail da pessoa pra compartilhar diretamente.' },
+        role: { type: 'string', description: '"read" (so ve) ou "write" (edita). Padrao "read".' },
+        anyoneWithLink: { type: 'boolean', description: 'Se true, cria um link acessivel a qualquer pessoa que o tiver.' },
+        notify: { type: 'boolean', description: 'Se true (padrao), avisa a pessoa por e-mail ao compartilhar diretamente.' },
+      },
+      required: ['fileId'],
+    },
+    async run(args) {
+      if (!args.email && !args.anyoneWithLink) {
+        throw new Error('Informe "email" e/ou "anyoneWithLink": true - pelo menos um dos dois.');
+      }
+      const account = await resolveAccount(args.account);
+      return magFetch(`/internal/onedrive/documents/${encodeURIComponent(args.fileId)}/share`, {
+        method: 'POST',
+        body: JSON.stringify({
+          tenantId: MAG_TENANT_ID,
+          accountId: account.id,
+          ...(args.email ? { email: String(args.email) } : {}),
+          ...(args.role ? { role: String(args.role) } : {}),
+          ...(args.anyoneWithLink !== undefined ? { anyoneWithLink: !!args.anyoneWithLink } : {}),
+          ...(args.notify !== undefined ? { notify: !!args.notify } : {}),
+        }),
+      });
+    },
+  },
+
+  onedrive_delete_document: {
+    description: 'Move um arquivo do OneDrive para a lixeira (reversivel pelo usuario la - nao e uma exclusao permanente). Acao de escrita - confirme com o usuario antes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string' },
+        fileId: { type: 'string' },
+      },
+      required: ['fileId'],
+    },
+    async run(args) {
+      const account = await resolveAccount(args.account);
+      const query = new URLSearchParams({ tenantId: MAG_TENANT_ID, accountId: account.id });
+      return magFetch(`/internal/onedrive/documents/${encodeURIComponent(args.fileId)}?${query.toString()}`, {
+        method: 'DELETE',
+      });
+    },
+  },
+
+  onedrive_move_document: {
+    description: 'Move um arquivo do OneDrive pra outra pasta. Acao de escrita - confirme com o usuario antes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string' },
+        fileId: { type: 'string' },
+        parentPath: { type: 'string', description: 'Caminho da pasta de destino.' },
+      },
+      required: ['fileId', 'parentPath'],
+    },
+    async run(args) {
+      const account = await resolveAccount(args.account);
+      return magFetch(`/internal/onedrive/documents/${encodeURIComponent(args.fileId)}/move`, {
+        method: 'POST',
+        body: JSON.stringify({
+          tenantId: MAG_TENANT_ID,
+          accountId: account.id,
+          parentPath: String(args.parentPath),
+        }),
+      });
+    },
+  },
+
+  onedrive_copy_document: {
+    description: 'Duplica um arquivo no OneDrive, opcionalmente com novo nome e/ou pasta de destino. Acao de escrita - confirme com o usuario antes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string' },
+        fileId: { type: 'string' },
+        name: { type: 'string', description: 'Nome da copia (padrao: OneDrive gera um nome).' },
+        parentPath: { type: 'string', description: 'Caminho da pasta de destino (opcional).' },
+      },
+      required: ['fileId'],
+    },
+    async run(args) {
+      const account = await resolveAccount(args.account);
+      return magFetch(`/internal/onedrive/documents/${encodeURIComponent(args.fileId)}/copy`, {
+        method: 'POST',
+        body: JSON.stringify({
+          tenantId: MAG_TENANT_ID,
+          accountId: account.id,
+          ...(args.name ? { name: String(args.name) } : {}),
+          ...(args.parentPath ? { parentPath: String(args.parentPath) } : {}),
         }),
       });
     },

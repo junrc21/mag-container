@@ -12,7 +12,7 @@
 import { createInterface } from 'node:readline';
 
 const SERVER_NAME = 'mag-linear';
-const SERVER_VERSION = '0.1.0';
+const SERVER_VERSION = '0.2.0';
 const PROTOCOL_VERSION = '2025-06-18';
 
 const MAG_API_URL = (process.env.MAG_API_URL || '').replace(/\/$/, '');
@@ -85,6 +85,20 @@ async function resolveIssueId(idOrIdentifier) {
   return node.id;
 }
 
+async function resolveUserId(nameOrEmail) {
+  const d = await gql('{ users(first:100){ nodes { id name email active } } }');
+  const users = (d.users?.nodes || []).filter((u) => u.active);
+  const q = String(nameOrEmail).toLowerCase();
+  const found =
+    users.find((u) => (u.email || '').toLowerCase() === q) ||
+    users.find((u) => (u.name || '').toLowerCase() === q) ||
+    users.find((u) => (u.name || '').toLowerCase().includes(q));
+  if (!found) {
+    throw new Error(`Pessoa "${nameOrEmail}" não encontrada no Linear. Use linear_list_members pra ver quem está disponível.`);
+  }
+  return found.id;
+}
+
 // ── tools ───────────────────────────────────────────────────────────────────
 const tools = {
   linear_me: {
@@ -130,6 +144,16 @@ const tools = {
         url: i.url,
       }));
       return out.length ? out : 'Nenhuma issue encontrada.';
+    },
+  },
+
+  linear_list_members: {
+    description: 'Lista os membros ativos do workspace Linear (nome, e-mail, id) — use pra saber pra quem atribuir uma issue (linear_create_issue/linear_update_issue).',
+    inputSchema: { type: 'object', properties: {} },
+    async run() {
+      const d = await gql('{ users(first:100){ nodes { id name email active } } }');
+      const users = (d.users?.nodes || []).filter((u) => u.active);
+      return users.length ? users.map((u) => ({ id: u.id, name: u.name, email: u.email })) : 'Nenhum membro encontrado.';
     },
   },
 
@@ -196,6 +220,8 @@ const tools = {
         teamKey: { type: 'string', description: 'Ex.: "CX". Se omitido e houver só um time, usa ele.' },
         priority: { type: 'number', description: '0=nenhuma,1=urgente,2=alta,3=média,4=baixa.' },
         assignToMe: { type: 'boolean' },
+        assignee: { type: 'string', description: 'Nome ou e-mail de quem atribuir (ver linear_list_members). Alternativa a assignToMe.' },
+        dueDate: { type: 'string', description: 'Data de vencimento, formato YYYY-MM-DD.' },
       },
       required: ['title'],
     },
@@ -211,7 +237,12 @@ const tools = {
       const input = { title: args.title, teamId: team.id };
       if (args.description) input.description = args.description;
       if (typeof args.priority === 'number') input.priority = args.priority;
-      if (args.assignToMe && d.viewer?.id) input.assigneeId = d.viewer.id;
+      if (args.dueDate) input.dueDate = args.dueDate;
+      if (args.assignee) {
+        input.assigneeId = await resolveUserId(args.assignee);
+      } else if (args.assignToMe && d.viewer?.id) {
+        input.assigneeId = d.viewer.id;
+      }
       const r = await gql(
         'mutation($input:IssueCreateInput!){ issueCreate(input:$input){ success issue { identifier url } } }',
         { input },
@@ -222,7 +253,7 @@ const tools = {
   },
 
   linear_update_issue: {
-    description: 'Atualiza uma issue (mudar estado/título/descrição/prioridade). Ex.: mover para "Done". Ação que escreve.',
+    description: 'Atualiza uma issue (mudar estado/título/descrição/prioridade/responsável/vencimento). Ex.: mover para "Done". Ação que escreve.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -231,6 +262,8 @@ const tools = {
         title: { type: 'string' },
         description: { type: 'string' },
         priority: { type: 'number' },
+        assignee: { type: 'string', description: 'Nome ou e-mail de quem atribuir (ver linear_list_members).' },
+        dueDate: { type: 'string', description: 'Data de vencimento, formato YYYY-MM-DD.' },
       },
       required: ['issue'],
     },
@@ -240,6 +273,8 @@ const tools = {
       if (args.title) input.title = args.title;
       if (args.description) input.description = args.description;
       if (typeof args.priority === 'number') input.priority = args.priority;
+      if (args.dueDate) input.dueDate = args.dueDate;
+      if (args.assignee) input.assigneeId = await resolveUserId(args.assignee);
       if (args.stateName) {
         const d = await gql('query($id:String!){ issue(id:$id){ team { states(first:50){ nodes { id name } } } } }', { id });
         const states = d.issue?.team?.states?.nodes || [];
@@ -255,6 +290,21 @@ const tools = {
       if (!r.issueUpdate?.success) throw new Error('Falha ao atualizar a issue.');
       const i = r.issueUpdate.issue;
       return `Issue ${i.identifier} atualizada (estado: ${i.state?.name}).`;
+    },
+  },
+
+  linear_archive_issue: {
+    description: 'Arquiva uma issue no Linear (reversível — não é uma exclusão permanente). Ação que escreve — confirme com o usuário antes.',
+    inputSchema: {
+      type: 'object',
+      properties: { issue: { type: 'string', description: 'Identificador (CX-289) ou id.' } },
+      required: ['issue'],
+    },
+    async run(args) {
+      const id = await resolveIssueId(args.issue);
+      const r = await gql('mutation($id:String!){ issueArchive(id:$id){ success } }', { id });
+      if (!r.issueArchive?.success) throw new Error('Falha ao arquivar a issue.');
+      return 'Issue arquivada.';
     },
   },
 
