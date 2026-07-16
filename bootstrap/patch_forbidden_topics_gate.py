@@ -175,11 +175,11 @@ def _mag_forbidden_topic_block_message(source, event):
 
 GATE_ANCHOR = "        self._running_agents[_quick_key] = _AGENT_PENDING_SENTINEL\n"
 GATE_BLOCK = (
-    "        # MAG: restricted-topics gate - block sensitive tenant-defined themes\\n"
-    "        # before the model runs, unless this sender is explicitly allowlisted.\\n"
-    "        _mag_topic_block = _mag_forbidden_topic_block_message(source, event)\\n"
-    "        if _mag_topic_block is not None:\\n"
-    "            return _mag_topic_block\\n"
+    "        # MAG: restricted-topics gate - block sensitive tenant-defined themes\n"
+    "        # before the model runs, unless this sender is explicitly allowlisted.\n"
+    "        _mag_topic_block = _mag_forbidden_topic_block_message(source, event)\n"
+    "        if _mag_topic_block is not None:\n"
+    "            return _mag_topic_block\n"
 )
 
 
