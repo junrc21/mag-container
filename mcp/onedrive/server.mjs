@@ -205,6 +205,35 @@ const tools = {
       });
     },
   },
+
+  onedrive_update_document: {
+    description: 'Atualiza o conteudo e/ou o nome de um documento existente no OneDrive (pelo id, ver onedrive_list_documents/onedrive_search_documents). Nao funciona para pastas. Acao de escrita - confirme com o usuario antes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'E-mail ou parte do e-mail da conta OneDrive.' },
+        fileId: { type: 'string', description: 'Id do arquivo.' },
+        content: { type: 'string', description: 'Novo conteudo - substitui o conteudo atual do arquivo.' },
+        name: { type: 'string', description: 'Novo nome, se quiser renomear.' },
+      },
+      required: ['fileId'],
+    },
+    async run(args) {
+      if (args.content === undefined && !args.name) {
+        throw new Error('Informe "content" e/ou "name" para atualizar.');
+      }
+      const account = await resolveAccount(args.account);
+      return magFetch(`/internal/onedrive/documents/${encodeURIComponent(args.fileId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          tenantId: MAG_TENANT_ID,
+          accountId: account.id,
+          ...(args.content !== undefined ? { content: String(args.content) } : {}),
+          ...(args.name ? { name: String(args.name) } : {}),
+        }),
+      });
+    },
+  },
 };
 
 function toolList() {

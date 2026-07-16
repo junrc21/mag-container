@@ -261,6 +261,41 @@ const tools = {
     },
   },
 
+  gmail_update_message: {
+    description: 'Atualiza o estado de um e-mail existente: marca como lido/não lido, favorita/desfavorita, e/ou arquiva (sai da caixa de entrada, continua acessível) / volta pra caixa de entrada. Informe só os campos que quer mudar. Ação que escreve — confirme com o usuário antes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string' },
+        id: { type: 'string', description: 'ID da mensagem do Gmail (ver gmail_search).' },
+        markRead: { type: 'boolean', description: 'true = marca como lido, false = marca como não lido.' },
+        star: { type: 'boolean', description: 'true = favorita, false = remove o favorito.' },
+        archive: { type: 'boolean', description: 'true = arquiva (remove da caixa de entrada), false = volta pra caixa de entrada.' },
+      },
+      required: ['id'],
+    },
+    async run(args) {
+      if (args.markRead === undefined && args.star === undefined && args.archive === undefined) {
+        throw new Error('Informe ao menos um de: markRead, star, archive.');
+      }
+      const { token } = await resolveToken(args.account);
+      const addLabelIds = [];
+      const removeLabelIds = [];
+      if (args.markRead === true) removeLabelIds.push('UNREAD');
+      if (args.markRead === false) addLabelIds.push('UNREAD');
+      if (args.star === true) addLabelIds.push('STARRED');
+      if (args.star === false) removeLabelIds.push('STARRED');
+      if (args.archive === true) removeLabelIds.push('INBOX');
+      if (args.archive === false) addLabelIds.push('INBOX');
+      const msg = await gfetch(
+        token,
+        `${GMAIL}/messages/${encodeURIComponent(args.id)}/modify`,
+        { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ addLabelIds, removeLabelIds }) },
+      );
+      return { id: msg.id, labelIds: msg.labelIds };
+    },
+  },
+
   drive_search: {
     description: 'Busca arquivos no Google Drive por nome/conteúdo. Retorna id, nome, tipo e link.',
     inputSchema: {
@@ -498,6 +533,46 @@ const tools = {
         body: JSON.stringify(body),
       });
       return { id: ev.id, htmlLink: ev.htmlLink, meetLink: ev.hangoutLink || null };
+    },
+  },
+
+  calendar_update_event: {
+    description: 'Atualiza um evento existente na agenda (remarca horário, muda título/descrição/convidados). Informe só os campos que quer mudar — o resto do evento fica como está. Ação que escreve — confirme com o usuário antes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string' },
+        eventId: { type: 'string', description: 'ID do evento (ver calendar_list_events).' },
+        calendarId: { type: 'string', description: 'Padrão "primary".' },
+        summary: { type: 'string' },
+        description: { type: 'string' },
+        start: { type: 'string', description: 'ISO8601 do novo horário de início.' },
+        end: { type: 'string', description: 'ISO8601 do novo horário de fim.' },
+        attendees: { type: 'array', items: { type: 'string' }, description: 'Substitui a lista de convidados por essa (e-mails).' },
+      },
+      required: ['eventId'],
+    },
+    async run(args) {
+      const body = {};
+      if (args.summary !== undefined) body.summary = args.summary;
+      if (args.description !== undefined) body.description = args.description;
+      if (args.start !== undefined) body.start = { dateTime: args.start };
+      if (args.end !== undefined) body.end = { dateTime: args.end };
+      if (args.attendees !== undefined) body.attendees = args.attendees.map((email) => ({ email }));
+      if (!Object.keys(body).length) {
+        throw new Error('Informe ao menos um campo pra atualizar (summary, description, start, end, attendees).');
+      }
+      const { token } = await resolveToken(args.account);
+      const cal = encodeURIComponent(args.calendarId || 'primary');
+      const params = new URLSearchParams();
+      if (args.attendees !== undefined) params.set('sendUpdates', 'all');
+      const qs = params.toString();
+      const ev = await gfetch(
+        token,
+        `${CALENDAR}/calendars/${cal}/events/${encodeURIComponent(args.eventId)}${qs ? `?${qs}` : ''}`,
+        { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+      );
+      return { id: ev.id, summary: ev.summary, start: ev.start, end: ev.end, htmlLink: ev.htmlLink };
     },
   },
 };
