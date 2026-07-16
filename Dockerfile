@@ -26,6 +26,7 @@ COPY --chown=hermes:hermes bootstrap/patch_usage_tokens.py /opt/hermes/bootstrap
 COPY --chown=hermes:hermes bootstrap/patch_aux_usage_ledger.py /opt/hermes/bootstrap/patch_aux_usage_ledger.py
 COPY --chown=hermes:hermes bootstrap/mag_turn_ledger.py /opt/hermes/agent/mag_turn_ledger.py
 COPY --chown=hermes:hermes bootstrap/patch_toolsets_used.py /opt/hermes/bootstrap/patch_toolsets_used.py
+COPY --chown=hermes:hermes bootstrap/patch_admin_block.py /opt/hermes/bootstrap/patch_admin_block.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_warning.py /opt/hermes/bootstrap/patch_credit_warning.py
 COPY --chown=hermes:hermes bootstrap/patch_forbidden_topics_gate.py /opt/hermes/bootstrap/patch_forbidden_topics_gate.py
@@ -105,6 +106,12 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_aux_usage_ledger.p
 # Per-tool credits: report the toolsets a turn used in agent:end, so the control
 # plane can bill credits weighted by tool complexity. See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_toolsets_used.py
+
+# Admin block: hard-stop a client-channel turn before the agent runs when staff
+# has blocked this tenant from the Control Center. Highest-priority gate — runs
+# before credits/topics, since a blocked tenant shouldn't even pay for those
+# checks. See script header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_admin_block.py
 
 # Credit hard cap (Fase 2): block client-channel turns before the agent runs when
 # the tenant is out of credits, with a humane message. See script header.
