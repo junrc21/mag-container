@@ -39,7 +39,14 @@ launch, so the service-to-service key is never written to a file.
 ## Tools
 
 `google_list_accounts`, `gmail_search`, `gmail_get_message`, `gmail_send`,
-`drive_search`, `drive_get_file`, `calendar_list_events`, `calendar_create_event`.
+`drive_search`, `drive_get_file`, `drive_create_file`, `drive_update_file`,
+`drive_delete_file` (trash, reversible), `calendar_list_events`, `calendar_create_event`.
+
+Drive has full CRUD for plain/binary files (create/read/update/delete). It cannot
+edit the *content* of a native Google Docs/Sheets/Slides file (Drive's media-upload
+endpoint only replaces raw bytes; editing a native doc needs the separate Docs/Sheets
+API, not implemented here) — `drive_update_file` can still rename one. Gmail and
+Calendar only have create (send / create event) — no update/delete yet.
 
 ## Test locally
 

@@ -18,7 +18,7 @@
 import { createInterface } from 'node:readline';
 
 const SERVER_NAME = 'mag-google';
-const SERVER_VERSION = '0.1.0';
+const SERVER_VERSION = '0.2.0';
 const PROTOCOL_VERSION = '2025-06-18';
 
 const MAG_API_URL = (process.env.MAG_API_URL || '').replace(/\/$/, '');
@@ -117,6 +117,29 @@ async function gfetch(token, url, opts = {}) {
     throw new Error(`Google API ${res.status}: ${msg}`);
   }
   return body;
+}
+
+// Drive's "create with content in one shot" endpoint (uploadType=multipart) needs a
+// hand-rolled multipart/related body: one JSON part (metadata) + one part with the
+// raw file content. No multipart library here (zero-dependency server) — this is the
+// documented, minimal shape Drive's API expects.
+async function driveMultipartUpload(token, url, method, metadata, content, contentMimeType) {
+  const boundary = `mag-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const body =
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    `${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\n` +
+    `Content-Type: ${contentMimeType}; charset=UTF-8\r\n\r\n` +
+    `${content}\r\n` +
+    `--${boundary}--`;
+  const uploadUrl = url.replace('https://www.googleapis.com/', 'https://www.googleapis.com/upload/');
+  const qs = `uploadType=multipart&supportsAllDrives=true&fields=${encodeURIComponent('id,name,mimeType,webViewLink')}`;
+  return gfetch(token, `${uploadUrl}?${qs}`, {
+    method,
+    headers: { 'content-type': `multipart/related; boundary=${boundary}` },
+    body,
+  });
 }
 
 function b64urlDecode(data) {
@@ -297,6 +320,101 @@ const tools = {
         content = `[falha ao extrair conteúdo: ${e.message}]`;
       }
       return { ...meta, content: truncate(content) };
+    },
+  },
+
+  drive_create_file: {
+    description: 'Cria um arquivo no Google Drive com o conteúdo fornecido. Por padrão cria um arquivo de texto simples; use asGoogleDoc=true para criar um Google Docs nativo (editável direto no Drive). Ação que escreve — confirme com o usuário antes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string' },
+        name: { type: 'string', description: 'Nome do arquivo.' },
+        content: { type: 'string', description: 'Conteúdo em texto do arquivo.' },
+        mimeType: { type: 'string', description: 'MIME type do conteúdo enviado (padrão text/plain). Ignorado se asGoogleDoc=true.' },
+        asGoogleDoc: { type: 'boolean', description: 'Se true, converte o conteúdo pra um Google Docs nativo em vez de um arquivo de texto simples.' },
+        parentFolderId: { type: 'string', description: 'ID da pasta de destino (opcional; padrão raiz do Drive do usuário).' },
+      },
+      required: ['name', 'content'],
+    },
+    async run(args) {
+      const { token } = await resolveToken(args.account);
+      const sourceMime = args.mimeType || 'text/plain';
+      const metadata = {
+        name: String(args.name),
+        ...(args.parentFolderId ? { parents: [String(args.parentFolderId)] } : {}),
+        // Setting mimeType to a Google Docs type on create makes Drive CONVERT the
+        // uploaded content into a native, editable Google Doc instead of storing it
+        // as opaque bytes — this is the documented Drive API conversion behavior.
+        ...(args.asGoogleDoc ? { mimeType: 'application/vnd.google-apps.document' } : {}),
+      };
+      const file = await driveMultipartUpload(token, `${DRIVE}/files`, 'POST', metadata, String(args.content), sourceMime);
+      return { id: file.id, name: file.name, mimeType: file.mimeType, webViewLink: file.webViewLink };
+    },
+  },
+
+  drive_update_file: {
+    description: 'Atualiza o conteúdo e/ou o nome de um arquivo existente no Google Drive (pelo fileId, ver drive_search). Só funciona para arquivos de texto/binário simples — NÃO edita o conteúdo de um Google Docs/Sheets/Slides nativo (só o nome desses). Ação que escreve — confirme com o usuário antes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string' },
+        fileId: { type: 'string' },
+        content: { type: 'string', description: 'Novo conteúdo — substitui o conteúdo atual do arquivo.' },
+        name: { type: 'string', description: 'Novo nome, se quiser renomear.' },
+        mimeType: { type: 'string', description: 'MIME type do novo conteúdo (padrão text/plain).' },
+      },
+      required: ['fileId'],
+    },
+    async run(args) {
+      if (args.content === undefined && !args.name) {
+        throw new Error('Informe "content" e/ou "name" para atualizar o arquivo.');
+      }
+      const { token } = await resolveToken(args.account);
+      const fileUrl = `${DRIVE}/files/${encodeURIComponent(args.fileId)}`;
+      let file;
+      if (args.content !== undefined) {
+        // Simple media upload replaces the raw bytes — works for plain/binary files,
+        // but Drive rejects it for native Google Docs/Sheets/Slides (they have no
+        // "raw bytes" to overwrite; editing those needs the separate Docs/Sheets API,
+        // out of scope here — the tool description above warns about this). Like
+        // create, media upload goes through the /upload/ path, not the plain API path.
+        const uploadUrl = fileUrl.replace('https://www.googleapis.com/', 'https://www.googleapis.com/upload/');
+        file = await gfetch(
+          token,
+          `${uploadUrl}?uploadType=media&supportsAllDrives=true&fields=${encodeURIComponent('id,name,mimeType,webViewLink')}`,
+          { method: 'PATCH', headers: { 'content-type': args.mimeType || 'text/plain' }, body: String(args.content) },
+        );
+      }
+      if (args.name) {
+        file = await gfetch(
+          token,
+          `${fileUrl}?supportsAllDrives=true&fields=${encodeURIComponent('id,name,mimeType,webViewLink')}`,
+          { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: args.name }) },
+        );
+      }
+      return { id: file.id, name: file.name, mimeType: file.mimeType, webViewLink: file.webViewLink };
+    },
+  },
+
+  drive_delete_file: {
+    description: 'Move um arquivo do Google Drive para a lixeira (reversível pelo usuário na lixeira do Drive — não é uma exclusão permanente). Ação que escreve — confirme com o usuário antes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string' },
+        fileId: { type: 'string' },
+      },
+      required: ['fileId'],
+    },
+    async run(args) {
+      const { token } = await resolveToken(args.account);
+      const file = await gfetch(
+        token,
+        `${DRIVE}/files/${encodeURIComponent(args.fileId)}?supportsAllDrives=true&fields=${encodeURIComponent('id,name,trashed')}`,
+        { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ trashed: true }) },
+      );
+      return { id: file.id, name: file.name, trashed: file.trashed };
     },
   },
 
