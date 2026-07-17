@@ -26,6 +26,7 @@ COPY --chown=hermes:hermes bootstrap/patch_usage_tokens.py /opt/hermes/bootstrap
 COPY --chown=hermes:hermes bootstrap/patch_aux_usage_ledger.py /opt/hermes/bootstrap/patch_aux_usage_ledger.py
 COPY --chown=hermes:hermes bootstrap/mag_turn_ledger.py /opt/hermes/agent/mag_turn_ledger.py
 COPY --chown=hermes:hermes bootstrap/patch_toolsets_used.py /opt/hermes/bootstrap/patch_toolsets_used.py
+COPY --chown=hermes:hermes bootstrap/patch_enable_send_message.py /opt/hermes/bootstrap/patch_enable_send_message.py
 COPY --chown=hermes:hermes bootstrap/patch_admin_block.py /opt/hermes/bootstrap/patch_admin_block.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_warning.py /opt/hermes/bootstrap/patch_credit_warning.py
@@ -106,6 +107,12 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_aux_usage_ledger.p
 # Per-tool credits: report the toolsets a turn used in agent:end, so the control
 # plane can bill credits weighted by tool complexity. See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_toolsets_used.py
+
+# Register send_message as an agent-callable tool (toolset "messaging").
+# Upstream ships the send engine but deliberately never wires it into the
+# agent's own tool-calling loop. See script header for the safety rationale
+# and how MAG's own prompt-level policy still governs who may be messaged.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_enable_send_message.py
 
 # Admin block: hard-stop a client-channel turn before the agent runs when staff
 # has blocked this tenant from the Control Center. Highest-priority gate — runs
