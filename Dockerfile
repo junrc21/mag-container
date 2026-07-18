@@ -34,6 +34,7 @@ COPY --chown=hermes:hermes bootstrap/patch_forbidden_topics_gate.py /opt/hermes/
 COPY --chown=hermes:hermes bootstrap/patch_cron_job_runs.py /opt/hermes/bootstrap/patch_cron_job_runs.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_code_exec.py /opt/hermes/bootstrap/patch_disable_channel_code_exec.py
 COPY --chown=hermes:hermes bootstrap/patch_suppress_reset_banner.py /opt/hermes/bootstrap/patch_suppress_reset_banner.py
+COPY --chown=hermes:hermes bootstrap/patch_suppress_agent_diagnostics.py /opt/hermes/bootstrap/patch_suppress_agent_diagnostics.py
 COPY --chown=hermes:hermes entrypoint.sh /opt/hermes/entrypoint.sh
 
 # MAG bundled MCP servers (stdio, zero-dependency Node). The
@@ -148,6 +149,12 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_disable_channel_co
 # internal context_note; the user just continues in a fresh session. See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_suppress_reset_banner.py
 
+# Kill 4 more raw-diagnostic leaks to client channels (STT-unavailable install
+# hints, compression-abort/aux-fallback ops notes, agent-inactivity timeout
+# internals) that bypass BOTH the slash-command gate and the LLM-output
+# sanitizer. See script header for why the other 4 candidate sites need no fix.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_suppress_agent_diagnostics.py
+
 # Web search backend: ddgs (DuckDuckGo) — keyless, headless (no Chrome). The
 # config pins web.backend=ddgs so the agent gets REAL results instead of trying
 # the browser tool (no Chrome in this image) or an unconfigured paid provider.
@@ -217,6 +224,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install \
     --python /opt/hermes/.venv/bin/python3 \
     pymupdf pymupdf4llm pytesseract python-docx openpyxl python-pptx
+
+# Speech-to-text (voice messages): faster-whisper, genuinely free/offline, no API
+# key, no per-message cost. Exact version pin matches upstream's own [voice]
+# extra in pyproject.toml — installed directly (not via that extra) since
+# sounddevice/numpy in it are for local mic capture, irrelevant to a headless
+# container.
+RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/python3 faster-whisper==1.2.1
+
+# Pre-bake the model into the IMAGE (not /opt/data) at build time: deterministic,
+# zero runtime network dependency. HF_HOME is fixed to an in-image path —
+# independent of the later HOME=/opt/data override for the hermes user — so
+# every tenant container finds this SAME pre-warmed cache instead of
+# re-downloading into its own ephemeral writable layer on first voice message.
+# Runs as root (current USER); chown so the hermes user (who runs the gateway
+# at runtime) can read it. Model size "small" (not the faster "base") for
+# usable pt-BR accuracy on compressed/noisy Telegram/WhatsApp voice notes —
+# must match config.yaml's stt.local.model (buildConfigYaml() in
+# internal.service.ts) or this pre-bake is wasted and it lazy-downloads instead.
+ENV HF_HOME=/opt/hermes/.cache/huggingface
+RUN /opt/hermes/.venv/bin/python3 -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')" \
+    && chown -R hermes:hermes /opt/hermes/.cache/huggingface
 
 # MAG-bundled skills seeded into the tenant volume by entrypoint.sh.
 # Skills live at runtime under /opt/data/skills/ (the tenant volume).
