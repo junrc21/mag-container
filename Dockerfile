@@ -34,6 +34,7 @@ COPY --chown=hermes:hermes bootstrap/patch_forbidden_topics_gate.py /opt/hermes/
 COPY --chown=hermes:hermes bootstrap/patch_cron_job_runs.py /opt/hermes/bootstrap/patch_cron_job_runs.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_code_exec.py /opt/hermes/bootstrap/patch_disable_channel_code_exec.py
 COPY --chown=hermes:hermes bootstrap/patch_suppress_reset_banner.py /opt/hermes/bootstrap/patch_suppress_reset_banner.py
+COPY --chown=hermes:hermes bootstrap/patch_suppress_agent_diagnostics.py /opt/hermes/bootstrap/patch_suppress_agent_diagnostics.py
 COPY --chown=hermes:hermes entrypoint.sh /opt/hermes/entrypoint.sh
 
 # MAG bundled MCP servers (stdio, zero-dependency Node). The
@@ -147,6 +148,12 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_disable_channel_co
 # config.yaml internals and slash commands in English. The agent still gets the
 # internal context_note; the user just continues in a fresh session. See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_suppress_reset_banner.py
+
+# Kill 4 more raw-diagnostic leaks to client channels (STT-unavailable install
+# hints, compression-abort/aux-fallback ops notes, agent-inactivity timeout
+# internals) that bypass BOTH the slash-command gate and the LLM-output
+# sanitizer. See script header for why the other 4 candidate sites need no fix.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_suppress_agent_diagnostics.py
 
 # Web search backend: ddgs (DuckDuckGo) — keyless, headless (no Chrome). The
 # config pins web.backend=ddgs so the agent gets REAL results instead of trying
