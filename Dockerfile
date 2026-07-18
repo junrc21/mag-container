@@ -225,6 +225,27 @@ RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install \
     --python /opt/hermes/.venv/bin/python3 \
     pymupdf pymupdf4llm pytesseract python-docx openpyxl python-pptx
 
+# Speech-to-text (voice messages): faster-whisper, genuinely free/offline, no API
+# key, no per-message cost. Exact version pin matches upstream's own [voice]
+# extra in pyproject.toml — installed directly (not via that extra) since
+# sounddevice/numpy in it are for local mic capture, irrelevant to a headless
+# container.
+RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/python3 faster-whisper==1.2.1
+
+# Pre-bake the model into the IMAGE (not /opt/data) at build time: deterministic,
+# zero runtime network dependency. HF_HOME is fixed to an in-image path —
+# independent of the later HOME=/opt/data override for the hermes user — so
+# every tenant container finds this SAME pre-warmed cache instead of
+# re-downloading into its own ephemeral writable layer on first voice message.
+# Runs as root (current USER); chown so the hermes user (who runs the gateway
+# at runtime) can read it. Model size "small" (not the faster "base") for
+# usable pt-BR accuracy on compressed/noisy Telegram/WhatsApp voice notes —
+# must match config.yaml's stt.local.model (buildConfigYaml() in
+# internal.service.ts) or this pre-bake is wasted and it lazy-downloads instead.
+ENV HF_HOME=/opt/hermes/.cache/huggingface
+RUN /opt/hermes/.venv/bin/python3 -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')" \
+    && chown -R hermes:hermes /opt/hermes/.cache/huggingface
+
 # MAG-bundled skills seeded into the tenant volume by entrypoint.sh.
 # Skills live at runtime under /opt/data/skills/ (the tenant volume).
 # Storing them here avoids losing them on image rebuild while keeping

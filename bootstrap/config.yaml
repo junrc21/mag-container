@@ -81,4 +81,4 @@ stt:
   enabled: true
   provider: local
   local:
-    model: base
+    model: small
