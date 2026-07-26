@@ -275,6 +275,10 @@ COPY --chown=hermes:hermes bootstrap/skills/productivity/ocr-and-documents/SKILL
 # (control plane), so a reload keeps them; this is the image-level default.
 RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/python3 tzdata
 
+# Keep the early Mercado Livre MCP layer identical to the last known-good image and apply
+# feature changes only at the end of the build, minimizing downstream layer churn.
+COPY --chown=hermes:hermes mcp/mercado-livre/server.overlay.mjs /opt/mag/mercado-livre-mcp/server.mjs
+
 RUN chmod +x /opt/hermes/entrypoint.sh
 
 USER hermes
