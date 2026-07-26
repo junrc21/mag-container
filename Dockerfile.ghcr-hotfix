@@ -1,0 +1,6 @@
+ARG BASE_IMAGE=ghcr.io/junrc21/mag-container@sha256:aba23713c3e1bc7ece7823aeeac216e988c16610b99b33abef2e25917680c784
+FROM ${BASE_IMAGE}
+
+USER root
+COPY --chown=hermes:hermes mcp/mercado-livre/server.overlay.mjs /opt/mag/mercado-livre-mcp/server.mjs
+USER hermes
