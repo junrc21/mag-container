@@ -417,6 +417,36 @@ const tools = {
     },
   },
 
+  mercado_livre_create_seller_campaign: {
+    description: 'Cria uma campanha promocional do vendedor no Mercado Livre. Acao de escrita.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        promotionType: { type: 'string', description: 'Padrao: SELLER_CAMPAIGN.' },
+        name: { type: 'string' },
+        subType: { type: 'string', description: 'Padrao: FLEXIBLE_PERCENTAGE.' },
+        startDate: { type: 'string', description: 'Formato ISO 8601.' },
+        finishDate: { type: 'string', description: 'Formato ISO 8601.' },
+        body: { type: 'object', description: 'Campos adicionais opcionais enviados junto ao payload.' },
+      },
+      required: ['name', 'startDate', 'finishDate'],
+    },
+    async run(args) {
+      return meli('/seller-promotions/promotions', {
+        method: 'POST',
+        query: { app_version: 'v2' },
+        body: {
+          ...(args.body || {}),
+          promotion_type: args.promotionType || 'SELLER_CAMPAIGN',
+          name: args.name,
+          sub_type: args.subType || 'FLEXIBLE_PERCENTAGE',
+          start_date: args.startDate,
+          finish_date: args.finishDate,
+        },
+      });
+    },
+  },
+
   mercado_livre_list_item_promotions: {
     description: 'Lista promoções associadas a um item.',
     inputSchema: {
@@ -614,3 +644,5 @@ rl.on('line', (line) => {
 });
 
 log(`started (api=${MAG_API_URL || 'unset'} tenant=${MAG_TENANT_ID || 'unset'})`);
+
+
