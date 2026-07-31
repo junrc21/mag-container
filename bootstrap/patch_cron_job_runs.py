@@ -29,6 +29,7 @@ SCHEDULER_PY = pathlib.Path(
 )
 
 MARKER = "MAG: cron run history"
+AUTHORITATIVE_CREDIT_MARKER = "MAG: authoritative cron credit guard"
 
 # Helper function for regex-based replacement (more robust than exact string match)
 def replace_regex(text: str, pattern: str, replacement: str, label: str) -> str:
@@ -47,6 +48,12 @@ ANCHOR_TICK = (
     "def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> int:\n"
 )
 HELPER = (
+    "from mag_credit_guard import CreditStatus as _MagCreditStatus\n"
+    "from mag_credit_guard import check_authoritative_credits as _mag_check_authoritative_credits\n"
+    "\n"
+    "_MAG_CRON_CREDIT_BLOCKED = 'blocked_by_credit'\n"
+    "_MAG_CRON_CREDIT_UNAVAILABLE = 'credit_verification_unavailable'\n"
+    "\n"
     "def _mag_report_job_run(job, success, error, delivery_error, started_at, output=None):\n"
     '    """MAG: cron run history — best-effort POST of one cron run to the control\n'
     "    plane (persisted in mag_job_runs, surfaced per-routine in the client panel).\n"
@@ -103,6 +110,19 @@ NEW_START_PROCESS = (
     "        def _process_job(job: dict) -> bool:\n"
     '            """Run one due job end-to-end: execute, save, deliver, mark."""\n'
     "            _mag_run_started_at = _hermes_now().isoformat()  # MAG: cron run history\n"
+    "            # MAG: authoritative cron credit guard — applies to agent and no-agent jobs.\n"
+    "            _mag_credit_check = _mag_check_authoritative_credits()\n"
+    "            if _mag_credit_check.status is not _MagCreditStatus.AVAILABLE:\n"
+    "                _mag_credit_error = (\n"
+    "                    _MAG_CRON_CREDIT_BLOCKED\n"
+    "                    if _mag_credit_check.status is _MagCreditStatus.EXHAUSTED\n"
+    "                    else _MAG_CRON_CREDIT_UNAVAILABLE\n"
+    "                )\n"
+    "                mark_job_run(job[\"id\"], False, _mag_credit_error)\n"
+    "                _mag_report_job_run(\n"
+    "                    job, False, _mag_credit_error, None, _mag_run_started_at, None\n"
+    "                )  # MAG: cron run history\n"
+    "                return True\n"
     "            try:\n"
 )
 OLD_START_RUN_ONE = (
@@ -114,6 +134,17 @@ NEW_START_RUN_ONE = (
     "    failure is recorded via ``mark_job_run``), False only if processing raised.\n"
     '    """\n'
     "    _mag_run_started_at = _hermes_now().isoformat()  # MAG: cron run history\n"
+    "    # MAG: authoritative cron credit guard — applies to agent and no-agent jobs.\n"
+    "    _mag_credit_check = _mag_check_authoritative_credits()\n"
+    "    if _mag_credit_check.status is not _MagCreditStatus.AVAILABLE:\n"
+    "        _mag_credit_error = (\n"
+    "            _MAG_CRON_CREDIT_BLOCKED\n"
+    "            if _mag_credit_check.status is _MagCreditStatus.EXHAUSTED\n"
+    "            else _MAG_CRON_CREDIT_UNAVAILABLE\n"
+    "        )\n"
+    "        mark_job_run(job[\"id\"], False, _mag_credit_error)\n"
+    "        _mag_report_job_run(job, False, _mag_credit_error, None, _mag_run_started_at, None)\n"
+    "        return True\n"
     "    try:\n"
 )
 
@@ -155,9 +186,9 @@ NEW_MARK_EXCEPT = (
 def main() -> None:
     if not SCHEDULER_PY.exists():
         raise SystemExit(f"cron scheduler.py not found at {SCHEDULER_PY}")
-    text = SCHEDULER_PY.read_text()
+    text = SCHEDULER_PY.read_text(encoding="utf-8")
 
-    if MARKER in text:
+    if MARKER in text and AUTHORITATIVE_CREDIT_MARKER in text:
         print("OK: cron run history already patched (idempotent no-op)")
         return
 
@@ -191,7 +222,7 @@ def main() -> None:
         raise SystemExit("patch_cron_job_runs: exception mark anchor missing (Hermes changed).")
     text = replace_regex(text, OLD_MARK_EXCEPT_PATTERN, NEW_MARK_EXCEPT_REPL, "exception mark anchor")
 
-    SCHEDULER_PY.write_text(text)
+    SCHEDULER_PY.write_text(text, encoding="utf-8")
     print("OK: patched cron scheduler with per-run history reporting")
 
 
