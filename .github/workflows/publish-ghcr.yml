@@ -13,10 +13,6 @@ permissions:
 env:
   IMAGE_NAME: mag-container
   REGISTRY: ghcr.io
-  # Hotfix publish path: reuse the last known-good GHCR runtime image as the base and apply
-  # only the Mercado Livre MCP overlay. This minimizes new blob downloads on hosts that are
-  # currently failing against freshly rebuilt pkg-containers blobs.
-  BASE_IMAGE: ghcr.io/junrc21/mag-container@sha256:aba23713c3e1bc7ece7823aeeac216e988c16610b99b33abef2e25917680c784
 
 jobs:
   build-and-push:
@@ -56,9 +52,6 @@ jobs:
           provenance: false
           sbom: false
           outputs: type=image,push=true,oci-mediatypes=false,name-canonical=true
-          file: Dockerfile.ghcr-hotfix
-          build-args: |
-            BASE_IMAGE=${{ env.BASE_IMAGE }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
