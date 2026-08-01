@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// MAG OneDrive MCP server (stdio, zero-dependency).
+// MAG Microsoft 365 MCP server (stdio, zero-dependency): OneDrive + Outlook read/send.
 //
 // Exposes OneDrive tools to the Hermes agent. The server never persists tokens:
 // on every call it asks the MAG control plane for the tenant's connected
@@ -10,8 +10,8 @@ import { createInterface } from 'node:readline';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const SERVER_NAME = 'mag-onedrive';
-const SERVER_VERSION = '0.2.0';
+const SERVER_NAME = 'mag-microsoft-365';
+const SERVER_VERSION = '0.3.0';
 const PROTOCOL_VERSION = '2025-06-18';
 
 const MAG_API_URL = (process.env.MAG_API_URL || '').replace(/\/$/, '');
@@ -120,6 +120,73 @@ const tools = {
     },
   },
 
+  outlook_list_messages: {
+    description: 'Lista ou busca e-mails do Outlook da conta Microsoft conectada. Somente leitura; não baixa anexos.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'E-mail ou parte do e-mail da conta Microsoft.' },
+        query: { type: 'string', description: 'Texto opcional para busca.' },
+        limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Quantidade de mensagens (padrão 20).' },
+        cursor: { type: 'string', description: 'Cursor retornado pela página anterior.' },
+        unreadOnly: { type: 'boolean', description: 'Se true, retorna apenas não lidas.' },
+        receivedAfter: { type: 'string', description: 'Data/hora ISO 8601 mínima de recebimento.' },
+      },
+    },
+    async run(args) {
+      const account = await resolveAccount(args.account);
+      if (!account.outlookEnabled) {
+        throw new Error('A conta Microsoft precisa ser reconectada em Fontes para liberar o Outlook.');
+      }
+      const query = new URLSearchParams({ tenantId: MAG_TENANT_ID, accountId: account.id });
+      if (args.query) query.set('q', String(args.query));
+      if (args.limit) query.set('limit', String(args.limit));
+      if (args.cursor) query.set('cursor', String(args.cursor));
+      if (args.unreadOnly) query.set('unreadOnly', 'true');
+      if (args.receivedAfter) query.set('receivedAfter', String(args.receivedAfter));
+      return magFetch(`/internal/outlook/messages?${query.toString()}`);
+    },
+  },
+  outlook_send_email: {
+    description: 'Envia um único e-mail pelo Outlook somente quando a mensagem atual do usuário autenticado solicitou explicitamente o envio. Sem anexos, listas em massa, edição, movimentação, categorias ou exclusão.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        account: { type: 'string', description: 'E-mail ou parte do e-mail da conta Microsoft.' },
+        to: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 10 },
+        cc: { type: 'array', items: { type: 'string' }, maxItems: 10 },
+        bcc: { type: 'array', items: { type: 'string' }, maxItems: 10 },
+        subject: { type: 'string', minLength: 1, maxLength: 255 },
+        body: { type: 'string', minLength: 1, maxLength: 50000 },
+      },
+      required: ['to', 'subject', 'body'],
+    },
+    async run(args) {
+      const proof = args.__mag_provenance;
+      if (typeof proof !== 'string' || !proof) {
+        throw new Error('Envio bloqueado: prova da solicitação direta do usuário ausente.');
+      }
+      const account = await resolveAccount(args.account);
+      if (!account.outlookSendEnabled) {
+        throw new Error('A conta Microsoft precisa ser reconectada em Fontes para liberar o envio pelo Outlook.');
+      }
+      return magFetch('/internal/outlook/send', {
+        method: 'POST',
+        headers: { 'x-mag-send-provenance': proof },
+        body: JSON.stringify({
+          tenantId: MAG_TENANT_ID,
+          accountId: account.id,
+          ...(args.account ? { account: String(args.account) } : {}),
+          to: args.to,
+          ...(args.cc ? { cc: args.cc } : {}),
+          ...(args.bcc ? { bcc: args.bcc } : {}),
+          subject: args.subject,
+          body: args.body,
+        }),
+      });
+    },
+  },
   onedrive_list_documents: {
     description: 'Lista arquivos e pastas do OneDrive. Pode receber uma conta e um caminho opcional.',
     inputSchema: {

@@ -280,6 +280,11 @@ RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --python /opt/hermes/.venv/bin/
 # feature changes only at the end of the build, minimizing downstream layer churn.
 COPY --chown=hermes:hermes mcp/mercado-livre/server.overlay.mjs /opt/mag/mercado-livre-mcp/server.mjs
 
+# Outlook Mail.Send provenance: bind the authenticated inbound chat turn to the
+# exact MCP send arguments. The model cannot provide or override this proof.
+COPY --chown=hermes:hermes bootstrap/patch_outlook_send_provenance.py /opt/hermes/bootstrap/patch_outlook_send_provenance.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_outlook_send_provenance.py
+
 RUN chmod +x /opt/hermes/entrypoint.sh
 
 USER hermes
