@@ -166,6 +166,8 @@ _mag_seed_skill() {
 }
 _mag_seed_skill "productivity/pdf-generation"
 _mag_seed_skill "productivity/ocr-and-documents"
+_mag_seed_skill "finance/excel-author"
+_mag_seed_skill "productivity/docx-author"
 
 # Auto-install ByteRover CLI into the persistent volume if missing.
 # Default: enabled (set BRV_AUTO_INSTALL=0 to disable).

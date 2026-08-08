@@ -259,7 +259,9 @@ RUN /opt/hermes/.venv/bin/python3 -c "from faster_whisper import WhisperModel; W
 # Storing them here avoids losing them on image rebuild while keeping
 # the seeding idempotent (entrypoint never overwrites existing skills).
 RUN mkdir -p /opt/hermes/bootstrap/skills/productivity/pdf-generation \
-             /opt/hermes/bootstrap/skills/productivity/ocr-and-documents
+             /opt/hermes/bootstrap/skills/productivity/ocr-and-documents \
+             /opt/hermes/bootstrap/skills/finance/excel-author \
+             /opt/hermes/bootstrap/skills/productivity/docx-author
 COPY --chown=hermes:hermes bootstrap/skills/productivity/pdf-generation/SKILL.md \
     /opt/hermes/bootstrap/skills/productivity/pdf-generation/SKILL.md
 # Override the default ocr-and-documents skill with MAG's version that includes:
@@ -268,6 +270,20 @@ COPY --chown=hermes:hermes bootstrap/skills/productivity/pdf-generation/SKILL.md
 # - PDF reconstruction preserving original photos
 COPY --chown=hermes:hermes bootstrap/skills/productivity/ocr-and-documents/SKILL.md \
     /opt/hermes/bootstrap/skills/productivity/ocr-and-documents/SKILL.md
+# Excel generation: base image ships this under optional-skills/finance/ (disabled
+# by default) written for a different product (Cowork/Office-JS branches). This is
+# the same content adapted for MAG's headless runtime — /opt/data/workspace output
+# path instead of ./out/, no LibreOffice recalc step (not installed in this image),
+# delivered via the MEDIA: convention. openpyxl is already installed (see the
+# python-docx/openpyxl/python-pptx pip install above), no separate setup needed.
+COPY --chown=hermes:hermes bootstrap/skills/finance/excel-author/SKILL.md \
+    /opt/hermes/bootstrap/skills/finance/excel-author/SKILL.md
+# Word (.docx) generation: no equivalent skill exists anywhere in the base image
+# (unlike PDF/Excel/PowerPoint). Written from scratch for MAG, using python-docx
+# (already installed, same install line as above) — same MEDIA: delivery
+# convention as every other MAG document-generation skill.
+COPY --chown=hermes:hermes bootstrap/skills/productivity/docx-author/SKILL.md \
+    /opt/hermes/bootstrap/skills/productivity/docx-author/SKILL.md
 
 # Timezone: the whole platform runs on Brasília time. HERMES_TIMEZONE is read by
 # hermes_time.now() (the clock behind cron schedules + delivery), TZ covers OS-level
