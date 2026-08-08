@@ -17,6 +17,16 @@ the outcome (success/error/delivery_error/final_response) is finalized. The POST
 best-effort and NEVER raises — cron must not break on telemetry failure (same
 contract as the generated ~/.hermes/hooks/mag-runtime/handler.py usage hook).
 
+Also enforces the authoritative credit guard (``check_authoritative_credits``,
+shared with ``patch_credit_hardcap.py``'s chat-turn gate) before a job's agent
+ever runs. 2026-08-08 update (see MAG plan addendum "Enforcement de créditos"):
+a blocked job is no longer just reported-and-retried-next-tick — it is now
+PAUSED via ``cron.jobs.pause_job`` (so ``tick()`` stops picking it up until the
+client explicitly resumes it in the "Rotinas" panel) and the origin channel gets
+a one-time, best-effort, human-readable notice via ``_deliver_result`` — the
+pause itself is the throttle, so this never repeats per-tick for the same
+blocked episode.
+
 Idempotent + fail-loud (mirrors the other bootstrap patches).
 """
 
@@ -48,11 +58,41 @@ ANCHOR_TICK = (
     "def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> int:\n"
 )
 HELPER = (
+    "from cron.jobs import pause_job as _mag_pause_job\n"
     "from mag_credit_guard import CreditStatus as _MagCreditStatus\n"
     "from mag_credit_guard import check_authoritative_credits as _mag_check_authoritative_credits\n"
     "\n"
     "_MAG_CRON_CREDIT_BLOCKED = 'blocked_by_credit'\n"
     "_MAG_CRON_CREDIT_UNAVAILABLE = 'credit_verification_unavailable'\n"
+    "_MAG_CRON_CREDIT_MESSAGES = {\n"
+    "    _MAG_CRON_CREDIT_BLOCKED: (\n"
+    "        'Pausei essa rotina porque seus créditos acabaram. Reforce ou faça '\n"
+    "        'upgrade em Uso e Plano — depois é só reativar em Rotinas.'\n"
+    "    ),\n"
+    "    _MAG_CRON_CREDIT_UNAVAILABLE: (\n"
+    "        'Pausei essa rotina porque não consegui confirmar seus créditos agora. '\n"
+    "        'Reative em Rotinas quando quiser tentar de novo.'\n"
+    "    ),\n"
+    "}\n"
+    "\n"
+    "\n"
+    "def _mag_pause_and_notify_job(job, credit_error, adapters=None, loop=None):\n"
+    '    """MAG: authoritative cron credit guard — pause the job so it stops\n'
+    "    retrying every tick, and best-effort notify the origin channel once (the\n"
+    "    pause itself is the throttle: a paused job never ticks again until the\n"
+    "    client explicitly resumes it in Rotinas). NEVER raises — same contract\n"
+    "    as every other MAG cron hook.\n"
+    '    """\n'
+    "    try:\n"
+    "        _mag_pause_job(job['id'], reason=credit_error)\n"
+    "    except Exception:\n"
+    "        pass\n"
+    "    try:\n"
+    "        message = _MAG_CRON_CREDIT_MESSAGES.get(credit_error, _MAG_CRON_CREDIT_MESSAGES[_MAG_CRON_CREDIT_BLOCKED])\n"
+    "        _deliver_result(job, message, adapters=adapters, loop=loop)\n"
+    "    except Exception:\n"
+    "        pass\n"
+    "\n"
     "\n"
     "def _mag_report_job_run(job, success, error, delivery_error, started_at, output=None):\n"
     '    """MAG: cron run history — best-effort POST of one cron run to the control\n'
@@ -122,6 +162,7 @@ NEW_START_PROCESS = (
     "                _mag_report_job_run(\n"
     "                    job, False, _mag_credit_error, None, _mag_run_started_at, None\n"
     "                )  # MAG: cron run history\n"
+    "                _mag_pause_and_notify_job(job, _mag_credit_error, adapters=adapters, loop=loop)\n"
     "                return True\n"
     "            try:\n"
 )
@@ -144,6 +185,7 @@ NEW_START_RUN_ONE = (
     "        )\n"
     "        mark_job_run(job[\"id\"], False, _mag_credit_error)\n"
     "        _mag_report_job_run(job, False, _mag_credit_error, None, _mag_run_started_at, None)\n"
+    "        _mag_pause_and_notify_job(job, _mag_credit_error)\n"
     "        return True\n"
     "    try:\n"
 )

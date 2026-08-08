@@ -31,6 +31,7 @@ COPY --chown=hermes:hermes bootstrap/patch_admin_block.py /opt/hermes/bootstrap/
 COPY --chown=hermes:hermes bootstrap/mag_credit_guard.py /opt/hermes/mag_credit_guard.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_warning.py /opt/hermes/bootstrap/patch_credit_warning.py
+COPY --chown=hermes:hermes bootstrap/patch_companion_credit_gate.py /opt/hermes/bootstrap/patch_companion_credit_gate.py
 COPY --chown=hermes:hermes bootstrap/patch_forbidden_topics_gate.py /opt/hermes/bootstrap/patch_forbidden_topics_gate.py
 COPY --chown=hermes:hermes bootstrap/patch_cron_job_runs.py /opt/hermes/bootstrap/patch_cron_job_runs.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_code_exec.py /opt/hermes/bootstrap/patch_disable_channel_code_exec.py
@@ -136,6 +137,14 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_hardcap.py
 # Credit warning (Fase 2): append an 80%-of-quota heads-up to the tenant's own
 # reply for that turn (never a separate/proactive push). See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_warning.py
+
+# Companion credit gate: api_server.py (used by /v1/chat/completions, the
+# Companion's transport) is a structurally separate code path from run.py —
+# none of the credit/admin gates above ever run for it. Adds an authenticated
+# platform-override gate (blocks with 402 when out of credit) plus real usage
+# reporting on success, so a Companion turn is billed the same as any other
+# channel. See script header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_companion_credit_gate.py
 
 # Restricted topics: block tenant-defined sensitive themes on client channels
 # before the model runs, unless the sender is explicitly allowlisted for that
