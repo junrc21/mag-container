@@ -25,6 +25,37 @@ const MAX_TEXT = 12000;
 // in its own reply, which the channel adapter turns into a real attachment.
 const WORKSPACE_DIR = '/opt/data/workspace/onedrive';
 
+// Mirrors the same table in mcp/google/server.mjs (duplicated, not shared — each
+// MCP server here is deliberately zero-dependency and standalone). Restricted to
+// mimeTypes whose extension is in the MAG repo's MEDIA:<path> allowlist
+// (companion-media.ts's MEDIA_TAG_PATTERN) — confirmed live 2026-08-07 against a
+// real Drive file with no extension in its name: without this, a saved-but-
+// unmatchable MEDIA: tag fails silently (0 refs found on the MAG side) even
+// though the file itself saved correctly.
+const MIME_EXT_TYPES = {
+  'application/pdf': '.pdf',
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.ms-powerpoint': '.ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+  'text/plain': '.txt',
+  'text/csv': '.csv',
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'application/zip': '.zip',
+  'application/epub+zip': '.epub',
+};
+
+function ensureExtension(name, mimeType) {
+  if (/\.[A-Za-z0-9]{1,5}$/.test(name)) return name;
+  const ext = MIME_EXT_TYPES[mimeType];
+  return ext ? `${name}${ext}` : name;
+}
+
 function log(...args) {
   process.stderr.write(`[mag-onedrive] ${args.join(' ')}\n`);
 }
@@ -328,7 +359,10 @@ const tools = {
       }
       const buf = Buffer.from(result.content, 'base64');
       await mkdir(WORKSPACE_DIR, { recursive: true });
-      const safeName = String(result.name).replace(/[/\\]/g, '_');
+      // Whitespace breaks MEDIA_TAG_PATTERN's \S+ match same as slashes would,
+      // and a name with no recognized extension fails it entirely — see
+      // ensureExtension above.
+      const safeName = ensureExtension(String(result.name).replace(/[/\\\s]+/g, '_'), result.mimeType);
       const outPath = path.join(WORKSPACE_DIR, `${Date.now()}-${safeName}`);
       await writeFile(outPath, buf);
       return `Arquivo binario salvo. Para enviar ao usuario, inclua na sua resposta:\nMEDIA:${outPath}`;

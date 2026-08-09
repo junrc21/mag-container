@@ -57,6 +57,40 @@ const EXT_MIME_TYPES = {
   '.zip': 'application/zip',
 };
 
+// Reverse of EXT_MIME_TYPES, restricted to mimeTypes Drive actually returns for
+// binary files AND whose extension is in the MAG repo's MEDIA:<path> allowlist
+// (companion-media.ts's MEDIA_TAG_PATTERN) — a mapping to an extension that
+// regex doesn't recognize wouldn't help deliver the file, so it's left out
+// (e.g. no application/json here, even though EXT_MIME_TYPES has .json).
+const MIME_EXT_TYPES = {
+  'application/pdf': '.pdf',
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.ms-powerpoint': '.ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+  'text/plain': '.txt',
+  'text/csv': '.csv',
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'application/zip': '.zip',
+  'application/epub+zip': '.epub',
+};
+
+// Drive filenames don't always carry a recognizable extension (renamed on
+// upload, etc.) — MEDIA_TAG_PATTERN (MAG repo) only matches a path ending in a
+// known extension, so a file without one would silently fail to deliver even
+// though it saved correctly. Append one derived from the real mimeType when
+// the name doesn't already look like it has one.
+function ensureExtension(name, mimeType) {
+  if (/\.[A-Za-z0-9]{1,5}$/.test(name)) return name;
+  const ext = MIME_EXT_TYPES[mimeType];
+  return ext ? `${name}${ext}` : name;
+}
+
 function mimeTypeFor(filePath) {
   return EXT_MIME_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
 }
@@ -347,7 +381,10 @@ const tools = {
       );
       const buf = b64urlDecodeBuffer(data.data);
       await mkdir(WORKSPACE_DIR, { recursive: true });
-      const safeName = String(args.filename).replace(/[/\\]/g, '_');
+      // Same whitespace-collapse fix as drive_get_file below — an attachment
+      // filename like "Invoice March 2026.pdf" would otherwise break
+      // MEDIA_TAG_PATTERN's \S+ match on the MAG side.
+      const safeName = String(args.filename).replace(/[/\\\s]+/g, '_');
       const outPath = path.join(WORKSPACE_DIR, `${Date.now()}-${safeName}`);
       await writeFile(outPath, buf);
       return `Anexo salvo. Para enviar ao usuário, inclua na sua resposta:\nMEDIA:${outPath}`;
@@ -524,7 +561,7 @@ const tools = {
   },
 
   drive_get_file: {
-    description: 'Obtém metadados e (quando possível) o texto de um arquivo do Drive. Exporta Google Docs como texto.',
+    description: 'Obtém metadados de um arquivo do Drive. Google Docs/Sheets/Slides vêm como texto/CSV exportado. Arquivos binários (PDF, imagem, .docx/.xlsx enviado, etc.) são baixados e salvos no workspace do tenant — inclua uma linha MEDIA:<caminho> na sua resposta pra entregar o arquivo ao usuário no chat.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -550,7 +587,23 @@ const tools = {
         } else if (meta.mimeType?.startsWith('text/') || meta.mimeType === 'application/json') {
           content = await fetchText(token, `${DRIVE}/files/${args.fileId}?alt=media&supportsAllDrives=true`);
         } else {
-          content = '[conteúdo binário não extraído — use webViewLink]';
+          // Genuinely binary (PDF, image, uploaded Office file, zip, etc.) — Drive
+          // has no text form to export, so download the real bytes and hand them
+          // off the same way gmail_get_attachment does: write to the tenant
+          // workspace, tell the agent to reference it via MEDIA:.
+          const buf = await fetchBinary(token, `${DRIVE}/files/${args.fileId}?alt=media&supportsAllDrives=true`);
+          await mkdir(WORKSPACE_DIR, { recursive: true });
+          // Spaces (and other whitespace) break MEDIA_TAG_PATTERN just as much as
+          // slashes would (it captures \S+ up to a known extension) — collapse
+          // them too, not just slashes. Then make sure a recognized extension is
+          // present at all (see ensureExtension) — confirmed live 2026-08-07: a
+          // real Drive file named without one produced a MEDIA: tag the MAG side
+          // silently failed to match (0 refs found), even though the file itself
+          // saved fine.
+          const safeName = ensureExtension(String(meta.name || args.fileId).replace(/[/\\\s]+/g, '_'), meta.mimeType);
+          const outPath = path.join(WORKSPACE_DIR, `${Date.now()}-${safeName}`);
+          await writeFile(outPath, buf);
+          content = `Arquivo salvo. Para enviar ao usuário, inclua na sua resposta:\nMEDIA:${outPath}`;
         }
       } catch (e) {
         content = `[falha ao extrair conteúdo: ${e.message}]`;
@@ -875,6 +928,19 @@ async function fetchText(token, url) {
   const text = await res.text();
   if (!res.ok) throw new Error(`Google API ${res.status}: ${text.slice(0, 200)}`);
   return text;
+}
+
+// Like fetchText, but for actual binary content (PDF, image, uploaded .docx/.xlsx,
+// etc.) — res.text() would corrupt these via UTF-8 mis-decoding, so this reads the
+// raw bytes instead. Used by drive_get_file's binary branch, same shape as
+// gmail_get_attachment's fetch-then-write-then-MEDIA: pattern below.
+async function fetchBinary(token, url) {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Google API ${res.status}: ${text.slice(0, 200)}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
 }
 
 // ── JSON-RPC dispatch ──────────────────────────────────────────────────────

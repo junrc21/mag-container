@@ -31,6 +31,7 @@ COPY --chown=hermes:hermes bootstrap/patch_admin_block.py /opt/hermes/bootstrap/
 COPY --chown=hermes:hermes bootstrap/mag_credit_guard.py /opt/hermes/mag_credit_guard.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_warning.py /opt/hermes/bootstrap/patch_credit_warning.py
+COPY --chown=hermes:hermes bootstrap/patch_companion_credit_gate.py /opt/hermes/bootstrap/patch_companion_credit_gate.py
 COPY --chown=hermes:hermes bootstrap/patch_forbidden_topics_gate.py /opt/hermes/bootstrap/patch_forbidden_topics_gate.py
 COPY --chown=hermes:hermes bootstrap/patch_cron_job_runs.py /opt/hermes/bootstrap/patch_cron_job_runs.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_code_exec.py /opt/hermes/bootstrap/patch_disable_channel_code_exec.py
@@ -136,6 +137,14 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_hardcap.py
 # Credit warning (Fase 2): append an 80%-of-quota heads-up to the tenant's own
 # reply for that turn (never a separate/proactive push). See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_warning.py
+
+# Companion credit gate: api_server.py (used by /v1/chat/completions, the
+# Companion's transport) is a structurally separate code path from run.py —
+# none of the credit/admin gates above ever run for it. Adds an authenticated
+# platform-override gate (blocks with 402 when out of credit) plus real usage
+# reporting on success, so a Companion turn is billed the same as any other
+# channel. See script header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_companion_credit_gate.py
 
 # Restricted topics: block tenant-defined sensitive themes on client channels
 # before the model runs, unless the sender is explicitly allowlisted for that
@@ -259,7 +268,9 @@ RUN /opt/hermes/.venv/bin/python3 -c "from faster_whisper import WhisperModel; W
 # Storing them here avoids losing them on image rebuild while keeping
 # the seeding idempotent (entrypoint never overwrites existing skills).
 RUN mkdir -p /opt/hermes/bootstrap/skills/productivity/pdf-generation \
-             /opt/hermes/bootstrap/skills/productivity/ocr-and-documents
+             /opt/hermes/bootstrap/skills/productivity/ocr-and-documents \
+             /opt/hermes/bootstrap/skills/finance/excel-author \
+             /opt/hermes/bootstrap/skills/productivity/docx-author
 COPY --chown=hermes:hermes bootstrap/skills/productivity/pdf-generation/SKILL.md \
     /opt/hermes/bootstrap/skills/productivity/pdf-generation/SKILL.md
 # Override the default ocr-and-documents skill with MAG's version that includes:
@@ -268,6 +279,20 @@ COPY --chown=hermes:hermes bootstrap/skills/productivity/pdf-generation/SKILL.md
 # - PDF reconstruction preserving original photos
 COPY --chown=hermes:hermes bootstrap/skills/productivity/ocr-and-documents/SKILL.md \
     /opt/hermes/bootstrap/skills/productivity/ocr-and-documents/SKILL.md
+# Excel generation: base image ships this under optional-skills/finance/ (disabled
+# by default) written for a different product (Cowork/Office-JS branches). This is
+# the same content adapted for MAG's headless runtime — /opt/data/workspace output
+# path instead of ./out/, no LibreOffice recalc step (not installed in this image),
+# delivered via the MEDIA: convention. openpyxl is already installed (see the
+# python-docx/openpyxl/python-pptx pip install above), no separate setup needed.
+COPY --chown=hermes:hermes bootstrap/skills/finance/excel-author/SKILL.md \
+    /opt/hermes/bootstrap/skills/finance/excel-author/SKILL.md
+# Word (.docx) generation: no equivalent skill exists anywhere in the base image
+# (unlike PDF/Excel/PowerPoint). Written from scratch for MAG, using python-docx
+# (already installed, same install line as above) — same MEDIA: delivery
+# convention as every other MAG document-generation skill.
+COPY --chown=hermes:hermes bootstrap/skills/productivity/docx-author/SKILL.md \
+    /opt/hermes/bootstrap/skills/productivity/docx-author/SKILL.md
 
 # Timezone: the whole platform runs on Brasília time. HERMES_TIMEZONE is read by
 # hermes_time.now() (the clock behind cron schedules + delivery), TZ covers OS-level
