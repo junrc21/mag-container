@@ -246,7 +246,14 @@ SIGNATURE_BLOCK = (
     "    ) -> tuple:\n"
 )
 
-# 5) set_session_vars — the actual "platform=" label a turn runs under.
+# 5) set_session_vars — keep the actual Hermes platform as api_server.
+#
+# Important: the Companion override is an out-of-band MAG control-plane signal, not
+# a native Hermes platform. Hermes' prompt/hint stack only knows configured platform
+# names such as "api_server", "telegram", "whatsapp_cloud", etc. Running a turn as
+# platform="companion" can break downstream platform lookups. The override is still
+# propagated to _run_agent so the scoped credit gate and usage reporting below can
+# fire, but the agent session itself remains on the known api_server platform.
 SESSION_VARS_ANCHOR = (
     "            tokens = set_session_vars(\n"
     '                platform="api_server",\n'
@@ -257,7 +264,7 @@ SESSION_VARS_ANCHOR = (
 )
 SESSION_VARS_BLOCK = (
     "            tokens = set_session_vars(\n"
-    '                platform=(platform_override or "api_server"),  # MAG: companion credit gate\n'
+    '                platform="api_server",  # MAG: companion gate keeps Hermes on a known platform\n'
     '                chat_id=session_id or "",\n'
     '                session_key=gateway_session_key or session_id or "",\n'
     '                session_id=session_id or "",\n'
