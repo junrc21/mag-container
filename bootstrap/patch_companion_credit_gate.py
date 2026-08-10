@@ -272,8 +272,10 @@ SESSION_VARS_BLOCK = (
 )
 
 # 6) Real usage deduction — right after the usage dict is built, before the
-# function returns. Only fires for the Companion (platform_override set);
-# every other caller of _run_agent is unaffected.
+# function returns. Only fires for successful Companion turns (platform_override
+# set); every other caller of _run_agent is unaffected. A failed/partial agent
+# result (for example token_expired before the LLM responds) must not debit the
+# tenant: the HTTP handler will return an error instead of a usable reply.
 USAGE_ANCHOR = (
     "                usage = {\n"
     '                    "input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0,\n'
@@ -287,7 +289,12 @@ USAGE_BLOCK = (
     '                    "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0,\n'
     '                    "total_tokens": getattr(agent, "session_total_tokens", 0) or 0,\n'
     "                }\n"
-    "                if platform_override == _MAG_COMPANION_PLATFORM:  # MAG: companion credit gate\n"
+    "                if (\n"
+    "                    platform_override == _MAG_COMPANION_PLATFORM\n"
+    "                    and not result.get(\"failed\")\n"
+    "                    and not result.get(\"partial\")\n"
+    "                    and result.get(\"completed\", True)\n"
+    "                ):  # MAG: companion credit gate\n"
     "                    _mag_report_companion_usage(usage, getattr(agent, \"model\", None), getattr(agent, \"provider\", None))\n"
 )
 
