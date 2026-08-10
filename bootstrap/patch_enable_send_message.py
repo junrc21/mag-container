@@ -21,14 +21,20 @@ not relax Telegram's/each platform's own real anti-cold-DM restrictions
 (a bot still cannot message a user/bot that has never started a chat with
 it — that is enforced by the platform's API, independent of this patch).
 
-Two edits:
+Three edits:
   1. toolsets.py — add "send_message" to _HERMES_CORE_TOOLS (so it's part of
      every platform toolset: hermes-telegram, hermes-discord, ...) and define
      a "messaging" toolset entry so admins can enable/disable it per tenant
      via disabled_toolsets, exactly like any other toolset (MAG's own admin
      panel already has a "messaging" toggle in TOOLSET_CATALOG — it was a
-     no-op until now because Hermes had no toolset by that name).
-  2. tools/send_message_tool.py — replace the "intentionally NOT registered"
+     no-op until now because Hermes had no toolset by that name). Also add it
+     to Hermes' explicit "hermes-api-server" tool list, because MAG Companion
+     reaches the agent through the API server adapter, not a native Telegram/
+     WhatsApp adapter.
+  2. hermes_cli/tools_config.py — add "messaging" to CONFIGURABLE_TOOLSETS.
+     Hermes' gateway resolves enabled toolsets through this list; defining only
+     toolsets.py is not enough for agent sessions to actually receive the tool.
+  3. tools/send_message_tool.py — replace the "intentionally NOT registered"
      comment with the actual registry.register(...) call, following the
      documented pattern (see tools/clarify_tool.py for the canonical
      example).
@@ -40,11 +46,16 @@ import os
 import pathlib
 
 TOOLSETS_PY = pathlib.Path(os.getenv("TOOLSETS_PY", "/opt/hermes/toolsets.py"))
+TOOLS_CONFIG_PY = pathlib.Path(
+    os.getenv("TOOLS_CONFIG_PY", "/opt/hermes/hermes_cli/tools_config.py")
+)
 SEND_MESSAGE_TOOL_PY = pathlib.Path(
     os.getenv("SEND_MESSAGE_TOOL_PY", "/opt/hermes/tools/send_message_tool.py")
 )
 
 MARKER = "MAG: registered as an agent-callable tool"
+API_SERVER_MARKER = "MAG: API server messaging"
+TOOLS_CONFIG_MARKER = "MAG Messaging"
 
 # --- toolsets.py edit 1: add send_message to the shared core tool list ---------
 CORE_TOOLS_ANCHOR = (
@@ -75,6 +86,34 @@ MESSAGING_TOOLSET_BLOCK = (
     '        "includes": []\n'
     "    },\n"
     "\n"
+)
+
+API_SERVER_DESCRIPTION_ANCHOR = (
+    '        "description": "OpenAI-compatible API server — full agent tools accessible via HTTP (no interactive UI tools like clarify or send_message)",\n'
+)
+API_SERVER_DESCRIPTION_BLOCK = (
+    '        "description": "OpenAI-compatible API server — full agent tools accessible via HTTP, including MAG messaging for Companion",\n'
+)
+API_SERVER_TOOLS_ANCHOR = (
+    '            # Cronjob management\n'
+    '            "cronjob",\n'
+    '            # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)\n'
+)
+API_SERVER_TOOLS_BLOCK = (
+    '            # Cronjob management\n'
+    '            "cronjob",\n'
+    '            # MAG: API server messaging for Companion-driven outbound delivery.\n'
+    '            "send_message",\n'
+    '            # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)\n'
+)
+
+# --- hermes_cli/tools_config.py edit: expose the toggle to platform resolver ----
+TOOLS_CONFIG_ANCHOR = (
+    '    ("cronjob",         "⏰ Cron Jobs",                 "create/list/update/pause/resume/run, with optional attached skills"),\n'
+)
+TOOLS_CONFIG_BLOCK = (
+    TOOLS_CONFIG_ANCHOR +
+    '    ("messaging",       "📤 MAG Messaging",             "send_message to known contacts/channels"),\n'
 )
 
 # --- send_message_tool.py edit: register the tool -------------------------------
@@ -123,27 +162,61 @@ def _patch_toolsets() -> None:
     if not TOOLSETS_PY.exists():
         raise SystemExit(f"toolsets.py not found at {TOOLSETS_PY}")
     text = TOOLSETS_PY.read_text()
+    edits = 0
 
-    if '"send_message"' in text:
+    if '"send_message"' not in text:
+        if CORE_TOOLS_ANCHOR not in text:
+            raise SystemExit(
+                "patch_enable_send_message: _HERMES_CORE_TOOLS anchor missing (Hermes changed)."
+            )
+        text = text.replace(CORE_TOOLS_ANCHOR, CORE_TOOLS_REPLACEMENT, 1)
+        edits += 1
+
+        if MESSAGING_TOOLSET_ANCHOR not in text:
+            raise SystemExit(
+                "patch_enable_send_message: clarify toolset anchor missing (Hermes changed)."
+            )
+        text = text.replace(
+            MESSAGING_TOOLSET_ANCHOR, MESSAGING_TOOLSET_ANCHOR + MESSAGING_TOOLSET_BLOCK, 1
+        )
+        edits += 1
+
+    if API_SERVER_MARKER not in text:
+        if API_SERVER_DESCRIPTION_ANCHOR in text:
+            text = text.replace(API_SERVER_DESCRIPTION_ANCHOR, API_SERVER_DESCRIPTION_BLOCK, 1)
+            edits += 1
+        if API_SERVER_TOOLS_ANCHOR not in text:
+            raise SystemExit(
+                "patch_enable_send_message: hermes-api-server cronjob anchor missing (Hermes changed)."
+            )
+        text = text.replace(API_SERVER_TOOLS_ANCHOR, API_SERVER_TOOLS_BLOCK, 1)
+        edits += 1
+
+    if edits == 0:
         print("OK: toolsets.py already patched (idempotent no-op)")
         return
 
-    if CORE_TOOLS_ANCHOR not in text:
-        raise SystemExit(
-            "patch_enable_send_message: _HERMES_CORE_TOOLS anchor missing (Hermes changed)."
-        )
-    text = text.replace(CORE_TOOLS_ANCHOR, CORE_TOOLS_REPLACEMENT, 1)
-
-    if MESSAGING_TOOLSET_ANCHOR not in text:
-        raise SystemExit(
-            "patch_enable_send_message: clarify toolset anchor missing (Hermes changed)."
-        )
-    text = text.replace(
-        MESSAGING_TOOLSET_ANCHOR, MESSAGING_TOOLSET_ANCHOR + MESSAGING_TOOLSET_BLOCK, 1
-    )
-
     TOOLSETS_PY.write_text(text)
-    print("OK: patched toolsets.py (core tools list + messaging toolset)")
+    print(f"OK: patched toolsets.py ({edits} edit(s): core/messaging/api-server)")
+
+
+def _patch_tools_config() -> None:
+    if not TOOLS_CONFIG_PY.exists():
+        raise SystemExit(f"tools_config.py not found at {TOOLS_CONFIG_PY}")
+    text = TOOLS_CONFIG_PY.read_text()
+
+    if TOOLS_CONFIG_MARKER in text:
+        print("OK: tools_config.py already patched (idempotent no-op)")
+        return
+
+    if TOOLS_CONFIG_ANCHOR not in text:
+        raise SystemExit(
+            "patch_enable_send_message: CONFIGURABLE_TOOLSETS cronjob anchor missing (Hermes changed)."
+        )
+    text = text.replace(TOOLS_CONFIG_ANCHOR, TOOLS_CONFIG_BLOCK, 1)
+
+    TOOLS_CONFIG_PY.write_text(text)
+    print("OK: patched tools_config.py (messaging configurable toolset)")
 
 
 def _patch_send_message_tool() -> None:
@@ -167,6 +240,7 @@ def _patch_send_message_tool() -> None:
 
 def main() -> None:
     _patch_toolsets()
+    _patch_tools_config()
     _patch_send_message_tool()
 
 
