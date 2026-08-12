@@ -30,10 +30,11 @@ class InvestingMcpTests(unittest.TestCase):
         responses = [json.loads(line) for line in completed.stdout.splitlines()]
         self.assertEqual(len(responses), 3)
         tools = responses[1]["result"]["tools"]
-        self.assertEqual([tool["name"] for tool in tools], ["resolve_issuer", "get_regulatory_report"])
-        self.assertIn("antes de get_regulatory_report", tools[0]["description"])
+        self.assertEqual([tool["name"] for tool in tools], ["resolve_issuer", "get_regulatory_report", "get_notifications"])
+        self.assertIn("get_regulatory_report", tools[0]["description"])
         self.assertIn("sourceUrl", tools[1]["description"])
-        self.assertIn("não fornece cotação", tools[1]["description"])
+        self.assertIn("Não fornece cotação", tools[1]["description"])
+        self.assertIn("sourceUrl", tools[2]["description"])
         self.assertTrue(responses[2]["result"]["isError"])
         self.assertNotIn("stack", responses[2]["result"]["content"][0]["text"].lower())
 

@@ -8,7 +8,7 @@ const TIMEOUT_MS = 15000;
 
 const tools = {
   resolve_issuer: {
-    description: 'Localiza uma empresa na base oficial da CVM por nome, razão social, CNPJ ou código CVM. Use esta ferramenta antes de get_regulatory_report sempre que o UUID do emissor ainda não estiver disponível. Se houver mais de um candidato plausível, peça ao usuário para escolher.',
+    description: 'Localiza uma empresa na base oficial da CVM por nome, razão social, CNPJ, código CVM ou ticker comum, como PETR4 e VALE3. Ticker é somente um alias para fundamentos e nunca significa cotação. Use antes de get_regulatory_report quando o UUID for desconhecido.',
     inputSchema: {
       type: 'object', required: ['query'], additionalProperties: false,
       properties: { query: { type: 'string', minLength: 2 }, limit: { type: 'integer', minimum: 1, maximum: 20, default: 5 } },
@@ -16,12 +16,21 @@ const tools = {
     path: '/internal/investing/resolve-issuer',
   },
   get_regulatory_report: {
-    description: 'Obtém relatório regulatório oficial da CVM para um issuerId já resolvido. Ao responder, preserve warnings, freshness, coverage e datas; cite sourceUrl em toda afirmação material. Esta ferramenta não fornece cotação, PETR3/PETR4, variação diária nem market data: nesses casos explique a limitação e nunca estime preço.',
+    description: 'Obtém relatório regulatório oficial compacto da CVM. Preserve warnings, freshness, coverage e datas; cite sourceUrl em toda afirmação material. Não fornece cotação, variação, volume nem market data.',
     inputSchema: {
       type: 'object', required: ['issuerId'], additionalProperties: false,
       properties: { issuerId: { type: 'string', format: 'uuid' } },
     },
     path: '/internal/investing/regulatory-report',
+  },
+  get_notifications: {
+    description: 'Busca novas divulgações e revisões oficiais da CVM ainda não apresentadas por esta MAG. Preserve warnings e cite sourceUrl. Não trate divulgações oficiais como notícias editoriais e não use esta ferramenta para cotação.',
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: { limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 } },
+    },
+    path: '/internal/investing/notifications',
+    bodyDefaults: { consumerKey: 'runtime-default' },
   },
 };
 
@@ -34,14 +43,14 @@ function textResult(value, isError = false) {
 function assertConfigured() {
   if (!MAG_API_URL || !MAG_INTERNAL_KEY || !MAG_TENANT_ID) throw new Error('Integração de dados oficiais indisponível neste momento.');
 }
-async function callInternal(path, args) {
+async function callInternal(tool, args) {
   assertConfigured();
   let response;
   try {
-    response = await fetch(`${MAG_API_URL}${path}`, {
+    response = await fetch(`${MAG_API_URL}${tool.path}`, {
       method: 'POST',
       headers: { 'x-internal-key': MAG_INTERNAL_KEY, 'content-type': 'application/json' },
-      body: JSON.stringify({ tenantId: MAG_TENANT_ID, ...args }),
+      body: JSON.stringify({ tenantId: MAG_TENANT_ID, ...args, ...(tool.bodyDefaults || {}) }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch {
@@ -56,7 +65,7 @@ async function callInternal(path, args) {
 async function handle(message) {
   const { id, method, params } = message;
   if (method === 'initialize') {
-    return result(id, { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'mag-investing', version: '1.0.0' } });
+    return result(id, { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'mag-investing', version: '1.1.0' } });
   }
   if (method === 'notifications/initialized') return;
   if (method === 'ping') return result(id, {});
@@ -66,7 +75,7 @@ async function handle(message) {
   if (method === 'tools/call') {
     const tool = tools[params?.name];
     if (!tool) return error(id, -32602, 'Ferramenta desconhecida.');
-    try { return result(id, textResult(await callInternal(tool.path, params?.arguments || {}))); }
+    try { return result(id, textResult(await callInternal(tool, params?.arguments || {}))); }
     catch (cause) { return result(id, textResult(cause instanceof Error ? cause.message : 'Consulta indisponível.', true)); }
   }
   if (id !== undefined) error(id, -32601, 'Método não suportado.');
