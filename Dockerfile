@@ -323,6 +323,17 @@ COPY --chown=hermes:hermes mcp/mercado-livre/server.overlay.mjs /opt/mag/mercado
 COPY --chown=hermes:hermes bootstrap/patch_outlook_send_provenance.py /opt/hermes/bootstrap/patch_outlook_send_provenance.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_outlook_send_provenance.py
 
+# A scheduled routine can now deliver to the MAG Companion (`deliver="companion:<id>"`).
+# The Companion is not a Hermes platform — the mag-api is what authenticates the device —
+# so delivery goes out over HTTP to the control plane instead of through an adapter.
+#
+# Order: AFTER patch_cron_job_runs and patch_sanitize_cron_errors, which also edit
+# cron/scheduler.py. The anchors do not collide (those target `tick()` and
+# `deliver_content`; this one targets `_deliver_result`), but a deterministic order
+# protects against future churn.
+COPY --chown=hermes:hermes bootstrap/patch_cron_companion_delivery.py /opt/hermes/bootstrap/patch_cron_companion_delivery.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_cron_companion_delivery.py
+
 RUN chmod +x /opt/hermes/entrypoint.sh
 
 USER hermes
