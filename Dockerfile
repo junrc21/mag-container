@@ -28,6 +28,10 @@ COPY --chown=hermes:hermes bootstrap/mag_turn_ledger.py /opt/hermes/agent/mag_tu
 COPY --chown=hermes:hermes bootstrap/patch_toolsets_used.py /opt/hermes/bootstrap/patch_toolsets_used.py
 COPY --chown=hermes:hermes bootstrap/patch_enable_send_message.py /opt/hermes/bootstrap/patch_enable_send_message.py
 COPY --chown=hermes:hermes bootstrap/patch_admin_block.py /opt/hermes/bootstrap/patch_admin_block.py
+# Compartilhado pelo gate do gateway e pelo agendador de rotinas. Enquanto a regra
+# existia só dentro do patch do gateway, as rotinas de um tenant bloqueado
+# continuavam rodando — e entregando mensagem no canal dele todo dia.
+COPY --chown=hermes:hermes bootstrap/mag_block_guard.py /opt/hermes/mag_block_guard.py
 COPY --chown=hermes:hermes bootstrap/mag_credit_guard.py /opt/hermes/mag_credit_guard.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_warning.py /opt/hermes/bootstrap/patch_credit_warning.py
