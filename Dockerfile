@@ -47,7 +47,7 @@ PY
 
 # MAG bundled MCP servers (stdio, zero-dependency Node). The
 # MAG control plane wires them per-tenant via generated mcp_servers entries.
-RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/c6-bank-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp /opt/mag/mercado-livre-mcp /opt/mag/investing-mcp /opt/mag/teammates-mcp /opt/mag/helpcenter-mcp && chown -R hermes:hermes /opt/mag
+RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/c6-bank-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp /opt/mag/mercado-livre-mcp /opt/mag/investing-mcp /opt/mag/teammates-mcp /opt/mag/helpcenter-mcp /opt/mag/mag-ops-mcp && chown -R hermes:hermes /opt/mag
 COPY --chown=hermes:hermes mcp/google/server.mjs /opt/mag/google-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/onedrive/server.mjs /opt/mag/onedrive-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/c6-bank/server.mjs /opt/mag/c6-bank-mcp/server.mjs
@@ -70,6 +70,11 @@ COPY --chown=hermes:hermes mcp/teammates/server.mjs /opt/mag/teammates-mcp/serve
 # onde apontar sem saber o que estava escrito lá, então ou respondia raso ou improvisava um
 # passo a passo que envelhecia junto com o produto. Só precisa de MAG_DOC_URL.
 COPY --chown=hermes:hermes mcp/helpcenter/server.mjs /opt/mag/helpcenter-mcp/server.mjs
+# MAG de Operação. Vai na imagem de TODO container, mas só é REGISTRADO no config.yaml do
+# tenant de staff (ver internal.service.ts) — e, mesmo se alguém o registrasse à força, o
+# servidor exige a MAG_OPS_KEY, que só existe no .env da staff. Duas travas, nenhuma
+# dependendo de o container dizer a verdade sobre quem é.
+COPY --chown=hermes:hermes mcp/mag-ops/server.mjs /opt/mag/mag-ops-mcp/server.mjs
 
 # MAG Custom Proxy MCP server (stdio, zero-dependency Node). Reads CUSTOM_CONNECTOR_CONFIG
 # env var (JSON with baseUrl + apiKey) and exposes a generic http_request tool for
