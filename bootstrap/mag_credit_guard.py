@@ -19,6 +19,15 @@ class CreditStatus(Enum):
 class CreditCheck:
     status: CreditStatus
     plan: Optional[str] = None
+    #: Saldo restante, quando conhecido. `None` em UNAVAILABLE.
+    #:
+    #: O gate de turno só precisa de "acabou ou não", mas a recusa por ferramenta
+    #: precisa do NÚMERO: "tem 5, a imagem custa 10" é uma comparação, não um booleano.
+    remaining: Optional[int] = None
+    #: Preço de cada toolset, como o control plane cobra. Vem na mesma resposta de
+    #: propósito — se viesse de outro lugar, o container recusaria por um preço e a
+    #: fatura cobraria outro.
+    toolset_costs: Optional[dict] = None
 
 
 def check_authoritative_credits(timeout_seconds: float = 4.0) -> CreditCheck:
@@ -46,6 +55,9 @@ def check_authoritative_credits(timeout_seconds: float = 4.0) -> CreditCheck:
             return CreditCheck(CreditStatus.UNAVAILABLE)
         status = CreditStatus.EXHAUSTED if remaining <= 0 else CreditStatus.AVAILABLE
         plan = payload.get("plan") if isinstance(payload.get("plan"), str) else None
-        return CreditCheck(status, plan)
+        custos = payload.get("toolsetCosts")
+        if not isinstance(custos, dict):
+            custos = None
+        return CreditCheck(status, plan, remaining=int(remaining), toolset_costs=custos)
     except Exception:
         return CreditCheck(CreditStatus.UNAVAILABLE)

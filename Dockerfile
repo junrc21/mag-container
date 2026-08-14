@@ -34,6 +34,10 @@ COPY --chown=hermes:hermes bootstrap/patch_admin_block.py /opt/hermes/bootstrap/
 COPY --chown=hermes:hermes bootstrap/mag_block_guard.py /opt/hermes/mag_block_guard.py
 COPY --chown=hermes:hermes bootstrap/mag_credit_guard.py /opt/hermes/mag_credit_guard.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
+# A recusa POR FERRAMENTA. O hardcap acima pergunta "sobrou alguma coisa?";
+# este pergunta "da para pagar ISTO?", no unico instante em que o preco e
+# conhecido e a acao ainda nao aconteceu.
+COPY --chown=hermes:hermes bootstrap/patch_tool_credit_gate.py /opt/hermes/bootstrap/patch_tool_credit_gate.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_warning.py /opt/hermes/bootstrap/patch_credit_warning.py
 COPY --chown=hermes:hermes bootstrap/patch_companion_credit_gate.py /opt/hermes/bootstrap/patch_companion_credit_gate.py
 COPY --chown=hermes:hermes bootstrap/patch_forbidden_topics_gate.py /opt/hermes/bootstrap/patch_forbidden_topics_gate.py
@@ -155,6 +159,7 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_admin_block.py
 # Credit hard cap (Fase 2): block client-channel turns before the agent runs when
 # the tenant is out of credits, with a humane message. See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_hardcap.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_tool_credit_gate.py
 
 # Credit warning (Fase 2): append an 80%-of-quota heads-up to the tenant's own
 # reply for that turn (never a separate/proactive push). See script header.
