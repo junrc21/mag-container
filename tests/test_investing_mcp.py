@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import unittest
@@ -25,7 +26,9 @@ class InvestingMcpTests(unittest.TestCase):
             encoding="utf-8",
             timeout=5,
             check=True,
-            env={},
+            # `env={}` limpava o PATH junto e o `node` não era encontrado — a suíte não
+            # rodava localmente. O que o teste precisa é da ausência das MAG_*, não do PATH.
+            env={"PATH": os.environ.get("PATH", "")},
         )
         responses = [json.loads(line) for line in completed.stdout.splitlines()]
         self.assertEqual(len(responses), 3)

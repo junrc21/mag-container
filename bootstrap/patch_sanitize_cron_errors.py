@@ -29,6 +29,15 @@ MARKER = "MAG: sanitize cron job errors"
 
 # Helper function to sanitize error messages - inserted before tick()
 SANITIZE_HELPER = '''# MAG: sanitize cron job errors sent to client channels
+#
+# ASCII com escapes unicode de proposito: este bloco e injetado dentro do source do
+# Hermes, e nao vale arriscar mojibake na unica frase que o cliente le.
+_MAG_GENERIC_CRON_ERROR = (
+    "N\u00e3o consegui processar essa tarefa agora. "
+    "Tente novamente em instantes ou entre em contato com o suporte da CyriusX."
+)
+
+
 def _mag_sanitize_cron_error(msg: str) -> str:
     """Sanitize technical error messages before they reach client channels."""
     if not msg:
@@ -51,8 +60,38 @@ def _mag_sanitize_cron_error(msg: str) -> str:
     msg_lower = msg.lower()
     for pattern in technical_patterns:
         if re.search(pattern, msg_lower, re.IGNORECASE):
-            return "Nao consegui processar essa tarefa agora. Tente novamente em instantes ou entre em contato com o suporte da CyriusX."
+            return _MAG_GENERIC_CRON_ERROR
     return msg
+
+
+# MAG: a frase que o cliente recebe quando uma rotina falha.
+#
+# O Hermes monta "\u26a0\ufe0f Cron job '<nome>' failed:\\n<erro>" -- em INGLES, com o nome
+# interno do agendador. Higienizar so o erro (o que este patch fazia antes) deixava o
+# involucro passar, e o cliente recebia no Telegram, num produto pt-BR:
+#
+#     Cron job 'Verificar tarefas atrasadas' failed:
+#     Nao consegui processar essa tarefa agora.
+#
+# Tres coisas erradas numa mensagem so: jargao de engenharia num canal de cliente (a
+# barreira de sigilo do produto proibe), em ingles, e "Nao" sem til. Reportado por um
+# cliente real que recebeu isso as 7h da manha.
+def _mag_cron_failure_message(job, error) -> str:
+    """Frase de falha de rotina, na voz dela. Nunca cita agendador, stack ou provedor."""
+    nome = str((job or {}).get("name") or "").strip()
+    sanitizado = _mag_sanitize_cron_error(str(error or ""))
+
+    # Erro que sobreviveu a higienizacao ja e legivel e nao-tecnico: entra como
+    # complemento, pra pessoa nao ficar sem nenhuma pista. O generico, nao -- repetiria
+    # "nao consegui" duas vezes na mesma frase.
+    motivo = "" if (not sanitizado or sanitizado == _MAG_GENERIC_CRON_ERROR) else " " + sanitizado
+    alvo = 'a rotina "%s"' % nome if nome else "uma rotina que voc\\u00ea agendou"
+
+    return (
+        "N\u00e3o consegui terminar %s agora.%s "
+        "Vou tentar de novo no pr\u00f3ximo hor\u00e1rio. "
+        "Se continuar falhando, fale com o suporte da CyriusX."
+    ) % (alvo, motivo)
 
 
 '''
@@ -103,14 +142,17 @@ def main() -> None:
         "                deliver_content = final_response if success else f\"⚠️ Cron job '{job.get('name', job['id'])}' failed:\\n{error}\""
     )
     NEW_DELIVERY = (
-        "                # MAG: sanitize error before including in deliver_content\n"
-        "                error = _mag_sanitize_cron_error(error)\n"
-        "                deliver_content = final_response if success else f\"⚠️ Cron job '{job.get('name', job['id'])}' failed:\\n{error}\""
+        "                # MAG: frase de falha na voz dela, sem o involucro em ingles do Hermes\n"
+        "                deliver_content = final_response if success else _mag_cron_failure_message(job, error)"
     )
     if OLD_DELIVERY in text:
         text = text.replace(OLD_DELIVERY, NEW_DELIVERY, 1)
         edits += 1
-    elif "sanitize error before including in deliver_content" not in text:
+    elif "_mag_cron_failure_message(job, error)" not in text:
+        # A sentinela precisa apontar pro que a edição REALMENTE deixa no arquivo. Ela
+        # ficou apontando pro comentário da versão anterior quando a linha de entrega
+        # mudou, e o resultado foi um patch que falhava na segunda aplicação sobre um
+        # arquivo já patcheado — silencioso até alguém rodar duas vezes.
         raise SystemExit("patch_sanitize_cron_errors: deliver_content anchor missing (Hermes changed).")
 
     # 3) Sanitize error BEFORE mark_job_run and _mag_report_job_run
@@ -163,6 +205,26 @@ def main() -> None:
     if OLD_EXCEPT_BLOCK in text:
         text = text.replace(OLD_EXCEPT_BLOCK, NEW_EXCEPT_BLOCK, 1)
         edits += 1
+
+    # Pós-condição: chamar uma função que não foi definida produz um scheduler que só
+    # quebra em RUNTIME, na primeira rotina que falha — e o patch teria impresso "OK".
+    #
+    # Isso não é hipotético: a injeção do helper é guardada por
+    # `if "_mag_sanitize_cron_error" not in text`, e a checagem de MARKER usa outra
+    # condição. Um arquivo em que as chamadas existem mas a definição não (upstream
+    # reorganizado, patch parcial de uma versão anterior) passava pelas duas e saía
+    # daqui quebrado, em silêncio. A disciplina fail-loud do repo existe justamente pra
+    # isso não acontecer.
+    for chamada, definicao in (
+        ("_mag_sanitize_cron_error(", "def _mag_sanitize_cron_error"),
+        ("_mag_cron_failure_message(", "def _mag_cron_failure_message"),
+        ("_MAG_GENERIC_CRON_ERROR", "_MAG_GENERIC_CRON_ERROR = ("),
+    ):
+        if chamada in text and definicao not in text:
+            raise SystemExit(
+                f"patch_sanitize_cron_errors: {chamada!r} e chamado mas {definicao!r} nao "
+                "foi injetado — o scheduler sairia quebrado."
+            )
 
     if edits == 0:
         print("OK: cron error sanitization already applied (idempotent no-op)")

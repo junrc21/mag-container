@@ -1,15 +1,38 @@
 """Build-time patch: admin "Bloquear acesso" hard-stop on client channels.
 
 Blocks a CLIENT-channel turn BEFORE the agent runs when staff has blocked this
-tenant from the Control Center's Manutenção page. Unlike the credit hard cap
-(which reads a locally-cached balance file, refreshed live only once the cache
-says exhausted, since credits change every turn), block state changes rarely —
-this checks GET /internal/runtime/<slug>/blocked LIVE on every client-channel
-turn, so a block (or unblock) takes effect immediately, with no propagation
-delay or stale-cache window. Internal staff surfaces (api_server/local/cli) are
-NEVER blocked — the admin god-mode chat must keep working to investigate/
-communicate about the block itself. Fail-open: any error allows the turn (never
-let a control-plane hiccup lock every client out of their own MAG).
+tenant from the Control Center. Internal staff surfaces (api_server/local/cli)
+are NEVER blocked — the admin god-mode chat must keep working to investigate and
+communicate about the block itself.
+
+## Why this stopped being fail-open
+
+The first version allowed the turn on ANY error, with a good argument: a
+control-plane hiccup should not lock every client out of their own MAG. The cost
+of that choice was the opposite failure — a blocked tenant kept being served for
+as long as the API was unreachable, which is exactly the window an unhappy
+client is most likely to be pushing.
+
+Neither answer is right, because the question was wrong. Block state is *sticky*
+— it changes once a month, not once a turn — so it can be cached on disk like
+the credit balance already is. The rule now:
+
+  * API answers            -> use it, and remember it
+  * API silent, cache warm -> use the last known answer (an outage does not
+                              unblock anyone, and does not block anyone either)
+  * API silent, no cache   -> block
+
+The last case only affects a container that has never once reached the control
+plane. Serving a tenant we have never been able to verify is the one situation
+where being wrong is unbounded.
+
+## Why the client is never told why
+
+Product decision, explicit: the reason for a block is CyriusX-internal. The API
+returns `reason` and this patch reads it only to ignore it. The message says the
+request could not be processed and to contact support — nothing about
+suspension, billing or accounts. See `acesso.rules.ts` in the control plane for
+the same rule on the panel side.
 
 Idempotent + fail-loud (mirrors the other bootstrap patches).
 """
@@ -24,40 +47,32 @@ MARKER = "_mag_admin_block_message"
 # --- Edit 1: module-level helpers (injected before a stable top-level def) ------
 HELPERS_ANCHOR = "def _gateway_platform_value(platform: Any) -> str:"
 HELPERS = '''# MAG: admin block — hard-stop client turns for a tenant staff has blocked from
-# the Control Center. Checked LIVE (no local cache) since block state changes
-# rarely — unlike credits, there is no per-turn write to piggyback a cache on.
-_MAG_ADMIN_BLOCK_DEFAULT_MSG = (
-    "Seu acesso a MAG esta temporariamente indisponivel. "
-    "Entre em contato com o suporte da CyriusX para mais informacoes."
-)
+# the Control Center. A regra (live + cache em disco, fail-closed) mora em
+# `mag_block_guard`, compartilhada com o agendador de rotinas: quando ela existia
+# só aqui, as rotinas continuavam rodando e ENTREGANDO mensagem para quem estava
+# bloqueado.
+from mag_block_guard import AccessStatus as _MagAccessStatus
+from mag_block_guard import BLOCKED_MESSAGE as _MAG_ADMIN_BLOCK_DEFAULT_MSG
+from mag_block_guard import check_tenant_access as _mag_check_tenant_access
 
 
 def _mag_admin_block_message(source):
-    """Humane block message if this client turn must be stopped, else None.
-    Internal surfaces are never blocked. Fail-open on any error."""
+    """Block message if this client turn must be stopped, else None.
+    Internal surfaces (api_server/local/cli) are never blocked — the admin
+    god-mode chat has to keep working to investigate the block itself."""
     try:
-        plat = source.platform.value if source and getattr(source, "platform", None) else ""
+        # `_gateway_platform_value` tolera `platform` chegando como str simples.
+        # O `source.platform.value` anterior levantava AttributeError nesse caso,
+        # caía no except e liberava o turno — um fail-open escondido dentro do
+        # que parecia um detalhe de tipo.
+        plat = _gateway_platform_value(getattr(source, "platform", None)) if source else ""
         if plat in ("api_server", "local", "cli"):
             return None
-        import json as _json
-        import urllib.request as _u
-        api = (os.getenv("MAG_API_URL") or "").rstrip("/")
-        key = os.getenv("MAG_INTERNAL_KEY") or ""
-        slug = os.getenv("MAG_TENANT_SLUG") or ""
-        if not api or not key or not slug:
-            return None
-        req = _u.Request(
-            f"{api}/internal/runtime/{slug}/blocked",
-            headers={"x-internal-key": key},
-            method="GET",
-        )
-        with _u.urlopen(req, timeout=4) as r:
-            data = _json.loads(r.read().decode("utf-8"))
-        if data.get("blocked") is True:
-            return _MAG_ADMIN_BLOCK_DEFAULT_MSG
+        check = _mag_check_tenant_access()
+        return _MAG_ADMIN_BLOCK_DEFAULT_MSG if check.status is _MagAccessStatus.BLOCKED else None
     except Exception:
-        return None
-    return None
+        # Falha imprevista no nosso próprio código bloqueia, não serve.
+        return _MAG_ADMIN_BLOCK_DEFAULT_MSG
 
 
 '''
@@ -70,7 +85,7 @@ GATE_ANCHOR = "        self._running_agents[_quick_key] = _AGENT_PENDING_SENTINE
 GATE_BLOCK = (
     "        # MAG: admin block — hard-stop before the agent runs if staff has\n"
     "        # blocked this tenant from the Control Center. Internal surfaces are\n"
-    "        # exempt (god-mode chat must keep working). Fail-open.\n"
+    "        # exempt (god-mode chat must keep working). Fail-closed.\n"
     "        _mag_admin_block = _mag_admin_block_message(source)\n"
     "        if _mag_admin_block is not None:\n"
     "            return _mag_admin_block\n"

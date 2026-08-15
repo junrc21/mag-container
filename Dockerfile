@@ -28,12 +28,21 @@ COPY --chown=hermes:hermes bootstrap/mag_turn_ledger.py /opt/hermes/agent/mag_tu
 COPY --chown=hermes:hermes bootstrap/patch_toolsets_used.py /opt/hermes/bootstrap/patch_toolsets_used.py
 COPY --chown=hermes:hermes bootstrap/patch_enable_send_message.py /opt/hermes/bootstrap/patch_enable_send_message.py
 COPY --chown=hermes:hermes bootstrap/patch_admin_block.py /opt/hermes/bootstrap/patch_admin_block.py
+# Compartilhado pelo gate do gateway e pelo agendador de rotinas. Enquanto a regra
+# existia só dentro do patch do gateway, as rotinas de um tenant bloqueado
+# continuavam rodando — e entregando mensagem no canal dele todo dia.
+COPY --chown=hermes:hermes bootstrap/mag_block_guard.py /opt/hermes/mag_block_guard.py
 COPY --chown=hermes:hermes bootstrap/mag_credit_guard.py /opt/hermes/mag_credit_guard.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
+# A recusa POR FERRAMENTA. O hardcap acima pergunta "sobrou alguma coisa?";
+# este pergunta "da para pagar ISTO?", no unico instante em que o preco e
+# conhecido e a acao ainda nao aconteceu.
+COPY --chown=hermes:hermes bootstrap/patch_tool_credit_gate.py /opt/hermes/bootstrap/patch_tool_credit_gate.py
 COPY --chown=hermes:hermes bootstrap/patch_credit_warning.py /opt/hermes/bootstrap/patch_credit_warning.py
 COPY --chown=hermes:hermes bootstrap/patch_companion_credit_gate.py /opt/hermes/bootstrap/patch_companion_credit_gate.py
 COPY --chown=hermes:hermes bootstrap/patch_forbidden_topics_gate.py /opt/hermes/bootstrap/patch_forbidden_topics_gate.py
 COPY --chown=hermes:hermes bootstrap/patch_cron_job_runs.py /opt/hermes/bootstrap/patch_cron_job_runs.py
+COPY --chown=hermes:hermes bootstrap/patch_cron_credit_charge.py /opt/hermes/bootstrap/patch_cron_credit_charge.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_code_exec.py /opt/hermes/bootstrap/patch_disable_channel_code_exec.py
 COPY --chown=hermes:hermes bootstrap/patch_suppress_reset_banner.py /opt/hermes/bootstrap/patch_suppress_reset_banner.py
 COPY --chown=hermes:hermes bootstrap/patch_suppress_agent_diagnostics.py /opt/hermes/bootstrap/patch_suppress_agent_diagnostics.py
@@ -47,7 +56,7 @@ PY
 
 # MAG bundled MCP servers (stdio, zero-dependency Node). The
 # MAG control plane wires them per-tenant via generated mcp_servers entries.
-RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/c6-bank-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp /opt/mag/mercado-livre-mcp /opt/mag/investing-mcp && chown -R hermes:hermes /opt/mag
+RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/c6-bank-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp /opt/mag/mercado-livre-mcp /opt/mag/investing-mcp /opt/mag/teammates-mcp /opt/mag/helpcenter-mcp /opt/mag/mag-ops-mcp && chown -R hermes:hermes /opt/mag
 COPY --chown=hermes:hermes mcp/google/server.mjs /opt/mag/google-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/onedrive/server.mjs /opt/mag/onedrive-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/c6-bank/server.mjs /opt/mag/c6-bank-mcp/server.mjs
@@ -60,6 +69,21 @@ COPY --chown=hermes:hermes mcp/mercado-livre/server.mjs /opt/mag/mercado-livre-m
 # MAG Investing: curated CVM regulatory-data MCP. It talks only to the MAG control
 # plane; the external service Bearer token never enters the tenant runtime image.
 COPY --chown=hermes:hermes mcp/investing/server.mjs /opt/mag/investing-mcp/server.mjs
+# MAG Teammates: internal tenant roster relay (list_teammates/message_teammate) —
+# lets the agent message other employees of the same tenant via their own MAG
+# (Companion, Telegram, WhatsApp). Different from send_message's external
+# channel_directory contacts.
+COPY --chown=hermes:hermes mcp/teammates/server.mjs /opt/mag/teammates-mcp/server.mjs
+# MAG Help Center: search_help/read_help_page contra a central de ajuda pública do produto.
+# Antes o agente tinha os links dos guias no SOUL e nenhuma forma de abri-los — sabia pra
+# onde apontar sem saber o que estava escrito lá, então ou respondia raso ou improvisava um
+# passo a passo que envelhecia junto com o produto. Só precisa de MAG_DOC_URL.
+COPY --chown=hermes:hermes mcp/helpcenter/server.mjs /opt/mag/helpcenter-mcp/server.mjs
+# MAG de Operação. Vai na imagem de TODO container, mas só é REGISTRADO no config.yaml do
+# tenant de staff (ver internal.service.ts) — e, mesmo se alguém o registrasse à força, o
+# servidor exige a MAG_OPS_KEY, que só existe no .env da staff. Duas travas, nenhuma
+# dependendo de o container dizer a verdade sobre quem é.
+COPY --chown=hermes:hermes mcp/mag-ops/server.mjs /opt/mag/mag-ops-mcp/server.mjs
 
 # MAG Custom Proxy MCP server (stdio, zero-dependency Node). Reads CUSTOM_CONNECTOR_CONFIG
 # env var (JSON with baseUrl + apiKey) and exposes a generic http_request tool for
@@ -136,6 +160,7 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_admin_block.py
 # Credit hard cap (Fase 2): block client-channel turns before the agent runs when
 # the tenant is out of credits, with a humane message. See script header.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_hardcap.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_tool_credit_gate.py
 
 # Credit warning (Fase 2): append an 80%-of-quota heads-up to the tenant's own
 # reply for that turn (never a separate/proactive push). See script header.
@@ -158,6 +183,14 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_forbidden_topics_g
 # control plane (POST /internal/runtime/<slug>/job-runs → mag_job_runs), so the
 # client panel can show per-routine run history. Best-effort, never breaks cron.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_cron_job_runs.py
+
+# Cron credit charge: routines never went through the chat-turn agent:end hook
+# (cron/scheduler.py calls AIAgent directly, not gateway/run.py's message handler),
+# so a successful routine ran, delivered, and never debited a single credit — the
+# pre-turn credit GATE worked, nothing downstream ever CHARGED. POSTs the same
+# payload shape as ~/.hermes/hooks/mag-runtime/handler.py's agent:end forwarder to
+# /internal/usage/events. Best-effort, never breaks cron. See script header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_cron_credit_charge.py
 
 # Task A: on client channels, remove the code_execution toolset entirely (not just
 # deny at approval) so the model never loops calling execute_code -> deny -> retry
@@ -312,6 +345,17 @@ COPY --chown=hermes:hermes mcp/mercado-livre/server.overlay.mjs /opt/mag/mercado
 # exact MCP send arguments. The model cannot provide or override this proof.
 COPY --chown=hermes:hermes bootstrap/patch_outlook_send_provenance.py /opt/hermes/bootstrap/patch_outlook_send_provenance.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_outlook_send_provenance.py
+
+# A scheduled routine can now deliver to the MAG Companion (`deliver="companion:<id>"`).
+# The Companion is not a Hermes platform — the mag-api is what authenticates the device —
+# so delivery goes out over HTTP to the control plane instead of through an adapter.
+#
+# Order: AFTER patch_cron_job_runs and patch_sanitize_cron_errors, which also edit
+# cron/scheduler.py. The anchors do not collide (those target `tick()` and
+# `deliver_content`; this one targets `_deliver_result`), but a deterministic order
+# protects against future churn.
+COPY --chown=hermes:hermes bootstrap/patch_cron_companion_delivery.py /opt/hermes/bootstrap/patch_cron_companion_delivery.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_cron_companion_delivery.py
 
 RUN chmod +x /opt/hermes/entrypoint.sh
 
