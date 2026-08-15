@@ -42,6 +42,7 @@ COPY --chown=hermes:hermes bootstrap/patch_credit_warning.py /opt/hermes/bootstr
 COPY --chown=hermes:hermes bootstrap/patch_companion_credit_gate.py /opt/hermes/bootstrap/patch_companion_credit_gate.py
 COPY --chown=hermes:hermes bootstrap/patch_forbidden_topics_gate.py /opt/hermes/bootstrap/patch_forbidden_topics_gate.py
 COPY --chown=hermes:hermes bootstrap/patch_cron_job_runs.py /opt/hermes/bootstrap/patch_cron_job_runs.py
+COPY --chown=hermes:hermes bootstrap/patch_cron_credit_charge.py /opt/hermes/bootstrap/patch_cron_credit_charge.py
 COPY --chown=hermes:hermes bootstrap/patch_disable_channel_code_exec.py /opt/hermes/bootstrap/patch_disable_channel_code_exec.py
 COPY --chown=hermes:hermes bootstrap/patch_suppress_reset_banner.py /opt/hermes/bootstrap/patch_suppress_reset_banner.py
 COPY --chown=hermes:hermes bootstrap/patch_suppress_agent_diagnostics.py /opt/hermes/bootstrap/patch_suppress_agent_diagnostics.py
@@ -182,6 +183,14 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_forbidden_topics_g
 # control plane (POST /internal/runtime/<slug>/job-runs → mag_job_runs), so the
 # client panel can show per-routine run history. Best-effort, never breaks cron.
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_cron_job_runs.py
+
+# Cron credit charge: routines never went through the chat-turn agent:end hook
+# (cron/scheduler.py calls AIAgent directly, not gateway/run.py's message handler),
+# so a successful routine ran, delivered, and never debited a single credit — the
+# pre-turn credit GATE worked, nothing downstream ever CHARGED. POSTs the same
+# payload shape as ~/.hermes/hooks/mag-runtime/handler.py's agent:end forwarder to
+# /internal/usage/events. Best-effort, never breaks cron. See script header.
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_cron_credit_charge.py
 
 # Task A: on client channels, remove the code_execution toolset entirely (not just
 # deny at approval) so the model never loops calling execute_code -> deny -> retry
