@@ -66,7 +66,7 @@ COPY --chown=hermes:hermes mcp/c6-bank/server.mjs /opt/mag/c6-bank-mcp/server.mj
 COPY --chown=hermes:hermes mcp/linear/server.mjs /opt/mag/linear-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/clickup/server.mjs /opt/mag/clickup-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/mercado-livre/server.mjs /opt/mag/mercado-livre-mcp/server.mjs
-# MAG Investing: curated CVM regulatory-data MCP. It talks only to the MAG control
+# MAG Investing: CVM regulatory data and optional B3 historical-market MCP. It talks only to the MAG control
 # plane; the external service Bearer token never enters the tenant runtime image.
 COPY --chown=hermes:hermes mcp/investing/server.mjs /opt/mag/investing-mcp/server.mjs
 # MAG Teammates: internal tenant roster relay (list_teammates/message_teammate) —
