@@ -9,6 +9,7 @@
 //   CUSTOM_CONNECTOR_CONFIG  JSON string with the connector config
 
 import { createInterface } from 'node:readline';
+import { createHmac } from 'node:crypto';
 
 const SERVER_NAME = 'mag-custom-proxy';
 const SERVER_VERSION = '0.2.0';
@@ -26,6 +27,19 @@ function log(...args) {
 // Apply authentication based on authType
 function applyAuth(url, headers, apiKey, authType = 'bearer') {
   switch (authType) {
+    case 'ghost_admin': {
+      const parts = apiKey?.split(':') || [];
+      if (parts.length !== 2 || !/^[a-f0-9]+$/i.test(parts[1]) || parts[1].length % 2 !== 0) {
+        throw new Error('Invalid Ghost Admin API key');
+      }
+      const now = Math.floor(Date.now() / 1000);
+      const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+      const unsigned = `${encode({ alg: 'HS256', kid: parts[0], typ: 'JWT' })}.${encode({ iat: now, exp: now + 300, aud: '/admin/' })}`;
+      const signature = createHmac('sha256', Buffer.from(parts[1], 'hex')).update(unsigned).digest('base64url');
+      headers['Authorization'] = `Ghost ${unsigned}.${signature}`;
+      headers['Accept-Version'] = 'v5.0';
+      break;
+    }
     case 'bearer':
       headers['Authorization'] = `Bearer ${apiKey}`;
       break;
@@ -92,7 +106,7 @@ async function makeHttpRequest(toolDef, args) {
 
   const body = toolDef.method !== 'GET' && toolDef.method !== 'DELETE' ? { body: args.body || {} } : {};
 
-  log(`Calling ${toolDef.method} ${url}`);
+  log(`Calling ${toolDef.method} ${new URL(url).origin}${new URL(url).pathname}`);
 
   try {
     const response = await fetch(url, {
@@ -239,7 +253,7 @@ function initConfig() {
           url = authResult.url;
           Object.assign(headers, authResult.headers);
 
-          log(`Calling ${args.method} ${url}`);
+          log(`Calling ${args.method} ${new URL(url).origin}${new URL(url).pathname}`);
 
           try {
             const response = await fetch(url, {
