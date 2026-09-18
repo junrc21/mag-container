@@ -27,6 +27,13 @@ function log(...args) {
 // Apply authentication based on authType
 function applyAuth(url, headers, apiKey, authType = 'bearer') {
   switch (authType) {
+    case 'sige_cloud':
+      if (!config.apiUser || !config.apiApp) throw new Error('SIGE Cloud requires apiUser and apiApp');
+      headers['Authorization-Token'] = apiKey;
+      headers['User'] = config.apiUser;
+      headers['App'] = config.apiApp;
+      headers['Accept'] = 'application/json';
+      break;
     case 'ghost_admin': {
       const parts = apiKey?.split(':') || [];
       if (parts.length !== 2 || !/^[a-f0-9]+$/i.test(parts[1]) || parts[1].length % 2 !== 0) {
@@ -83,6 +90,35 @@ function truncate(s) {
   return s.length > MAX_TEXT ? s.slice(0, MAX_TEXT) + '\n…[truncated]' : s;
 }
 
+function serializeToolResult(result) {
+  let serialized = JSON.stringify(result);
+  if (serialized.length <= MAX_TEXT) return serialized;
+  if (Array.isArray(result.body)) {
+    const preview = [...result.body];
+    const summary = { ...result, body: preview, totalItems: preview.length, truncated: true };
+    serialized = JSON.stringify(summary);
+    while (serialized.length > MAX_TEXT && preview.length > 0) {
+      preview.pop();
+      serialized = JSON.stringify(summary);
+    }
+    if (serialized.length <= MAX_TEXT) return serialized;
+  }
+  const { body, ...rest } = result;
+  return JSON.stringify({ ...rest, bodyPreview: JSON.stringify(body).slice(0, MAX_TEXT - 1000), truncated: true });
+}
+
+async function readApiResponse(response) {
+  const contentType = response.headers.get('content-type')?.toLowerCase() || '';
+  if (response.redirected || response.status >= 300 && response.status < 400 || contentType.includes('text/html')) {
+    return { error: true, status: response.status, message: 'A API retornou uma página de login ou um redirecionamento. Confira a URL e a autenticação.' };
+  }
+  const text = await response.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = text; }
+  if (!response.ok) return { error: true, status: response.status, statusText: response.statusText, body: truncate(data) };
+  return { ok: true, status: response.status, statusText: response.statusText, body: data };
+}
+
 // Substitute path parameters like {id} with actual values from args
 function substitutePath(path, args) {
   if (!path || typeof path !== 'string') return path;
@@ -112,32 +148,11 @@ async function makeHttpRequest(toolDef, args) {
     const response = await fetch(url, {
       method: toolDef.method,
       headers,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(15000),
       ...(Object.keys(body).length ? { body: JSON.stringify(body.body) } : {}),
     });
-
-    const text = await response.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
-    }
-
-    if (!response.ok) {
-      return {
-        error: true,
-        status: response.status,
-        statusText: response.statusText,
-        body: truncate(String(data)),
-      };
-    }
-
-    return {
-      ok: true,
-      status: response.status,
-      statusText: response.statusText,
-      body: data,
-    };
+    return await readApiResponse(response);
   } catch (err) {
     return {
       error: true,
@@ -173,7 +188,7 @@ function initConfig() {
     // Expose user-defined tools
     tools = {};
     for (const toolDef of userTools) {
-      const name = toolDef.name || toolDef.id;
+      const name = toolDef.id || toolDef.name;
       if (!name) continue;
 
       // Build input schema based on path params and body
@@ -259,32 +274,11 @@ function initConfig() {
             const response = await fetch(url, {
               method: args.method,
               headers,
+              redirect: 'manual',
+              signal: AbortSignal.timeout(15000),
               body: args.body ? JSON.stringify(args.body) : undefined,
             });
-
-            const text = await response.text();
-            let data;
-            try {
-              data = JSON.parse(text);
-            } catch {
-              data = text;
-            }
-
-            if (!response.ok) {
-              return {
-                error: true,
-                status: response.status,
-                statusText: response.statusText,
-                body: truncate(String(data)),
-              };
-            }
-
-            return {
-              ok: true,
-              status: response.status,
-              statusText: response.statusText,
-              body: data,
-            };
+            return await readApiResponse(response);
           } catch (err) {
             return {
               error: true,
@@ -339,7 +333,7 @@ async function handleCallTool(id, params) {
 
   try {
     const result = await tool.run(args || {});
-    reply(id, { content: [{ type: 'text', text: truncate(JSON.stringify(result, null, 2)) }] });
+    reply(id, { content: [{ type: 'text', text: serializeToolResult(result) }] });
   } catch (err) {
     replyError(id, -32603, `Tool error: ${err.message}`);
   }
