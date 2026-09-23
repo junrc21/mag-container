@@ -103,6 +103,12 @@ COPY mcp/docreader/package.json /opt/mag/docreader/package.json
 RUN cd /opt/mag/docreader && npm install --omit=dev --no-audit --no-fund && chown -R hermes:hermes /opt/mag/docreader
 COPY --chown=hermes:hermes mcp/docreader/server.mjs /opt/mag/docreader/server.mjs
 
+# Atendimento compartilhado oficial do WhatsApp. Gate na entrada e proxy de todos
+# os envios /messages para serializar a entrega com a ação humana de assumir.
+COPY --chown=hermes:hermes bootstrap/mag_whatsapp_handoff.py /opt/hermes/mag_whatsapp_handoff.py
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_handoff.py /opt/hermes/bootstrap/patch_whatsapp_handoff.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_handoff.py
+
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_byterover_plugin.py
 
 # Anti-noise: extend the gateway's Telegram-only status/error sanitization to
