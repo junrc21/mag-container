@@ -56,7 +56,7 @@ PY
 
 # MAG bundled MCP servers (stdio, zero-dependency Node). The
 # MAG control plane wires them per-tenant via generated mcp_servers entries.
-RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/c6-bank-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp /opt/mag/mercado-livre-mcp /opt/mag/investing-mcp /opt/mag/teammates-mcp /opt/mag/helpcenter-mcp /opt/mag/mag-ops-mcp && chown -R hermes:hermes /opt/mag
+RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/c6-bank-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp /opt/mag/mercado-livre-mcp /opt/mag/investing-mcp /opt/mag/teammates-mcp /opt/mag/helpcenter-mcp /opt/mag/mag-ops-mcp /opt/mag/companion-browser-mcp && chown -R hermes:hermes /opt/mag
 COPY --chown=hermes:hermes mcp/google/server.mjs /opt/mag/google-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/onedrive/server.mjs /opt/mag/onedrive-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/c6-bank/server.mjs /opt/mag/c6-bank-mcp/server.mjs
@@ -74,6 +74,13 @@ COPY --chown=hermes:hermes mcp/investing/server.mjs /opt/mag/investing-mcp/serve
 # (Companion, Telegram, WhatsApp). Different from send_message's external
 # channel_directory contacts.
 COPY --chown=hermes:hermes mcp/teammates/server.mjs /opt/mag/teammates-mcp/server.mjs
+# MAG Companion Browser: controla o navegador REAL do computador do cliente (Mac/
+# Windows), com a sessão dele já logada, via o app MAG Companion — NUNCA fala com o
+# Companion direto, só chama de volta o control plane, que mantém o canal (WebSocket)
+# de verdade. Nome deliberadamente diferente do toolset nativo 'browser' (Playwright
+# sandboxed dentro deste container, sem sessão do cliente) — são coisas fisicamente
+# diferentes, e o nome não pode confundir quem administra.
+COPY --chown=hermes:hermes mcp/companion-browser/server.mjs /opt/mag/companion-browser-mcp/server.mjs
 # MAG Help Center: search_help/read_help_page contra a central de ajuda pública do produto.
 # Antes o agente tinha os links dos guias no SOUL e nenhuma forma de abri-los — sabia pra
 # onde apontar sem saber o que estava escrito lá, então ou respondia raso ou improvisava um
