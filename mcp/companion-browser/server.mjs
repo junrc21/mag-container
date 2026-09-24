@@ -99,13 +99,25 @@ const DEVICE_ID_FIELD = { type: 'string', description: 'O deviceId informado no 
 
 const tools = {
   browser_navigate: {
-    description: 'Abre uma URL no navegador real do computador do usuário.',
+    description:
+      'Abre uma URL no navegador real do computador do usuário — sempre o navegador padrão do sistema dele, ' +
+      'abrindo-o se estiver fechado. Se o padrão não for Chrome nem Safari, a chamada falha avisando qual é o ' +
+      'padrão detectado e quais dessas duas opções estão instaladas: pergunte ao usuário qual prefere e repita a ' +
+      'chamada com o parâmetro browser preenchido — nunca escolha sozinho nem insista sem perguntar.',
     inputSchema: {
       type: 'object',
-      properties: { deviceId: DEVICE_ID_FIELD, url: { type: 'string', description: 'URL completa, com https://.' } },
+      properties: {
+        deviceId: DEVICE_ID_FIELD,
+        url: { type: 'string', description: 'URL completa, com https://.' },
+        browser: {
+          type: 'string',
+          enum: ['safari', 'chrome'],
+          description: 'Só preencha depois que uma chamada anterior recusou o navegador padrão e o usuário escolheu entre as opções oferecidas.',
+        },
+      },
       required: ['deviceId', 'url'],
     },
-    run: (a) => dispatch(a.deviceId, { type: 'navigate', url: a.url }),
+    run: (a) => dispatch(a.deviceId, { type: 'navigate', url: a.url, ...(a.browser ? { browser: a.browser } : {}) }),
   },
 
   browser_go_back: {
