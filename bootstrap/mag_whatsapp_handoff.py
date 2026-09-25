@@ -5,6 +5,7 @@ import contextvars
 import json
 import os
 import uuid
+import mag_whatsapp_resume as resume
 from urllib.parse import quote
 
 _turn = contextvars.ContextVar("mag_whatsapp_turn", default=None)
@@ -44,10 +45,30 @@ async def post(adapter, url, headers, payload):
     if turn is not None:
         identity = json.dumps([adapter._phone_number_id, turn, payload], sort_keys=True, ensure_ascii=False)
         request_id = str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
+    current = resume.turn.get()
     body = {"tenantId": os.environ["MAG_TENANT_ID"], "requestId": request_id, "payload": payload}
     if turn is not None and str(payload["to"]).lstrip("+") == turn[0].lstrip("+"):
         body["revision"] = turn[1]
-    return await adapter._http_client.post(f"{base}/send", headers=internal_headers, json=body, timeout=35.0)
+    if current is not None:
+        task = current["task"]
+        if str(payload["to"]).lstrip("+") != task["phone"]:
+            current["failed"] = True
+            raise RuntimeError("Reply task cannot send to another contact")
+        if current["no_reply"]:
+            raise RuntimeError("Reply already reviewed without delivery")
+        body.update(replyTaskId=task["id"], leaseToken=task["leaseToken"], revision=task["revision"])
+    try:
+        response = await adapter._http_client.post(f"{base}/send", headers=internal_headers, json=body, timeout=35.0)
+        if current is not None:
+            if response.status_code == 200 and response.json().get("messages"):
+                current["sent"] = True
+            else:
+                current["failed"] = True
+        return response
+    except Exception:
+        if current is not None:
+            current["failed"] = True
+        raise
 
 
 def enrich(event, state):
@@ -74,6 +95,6 @@ async def process(adapter, event, session_key, parent):
         raise RuntimeError("Missing WhatsApp handoff revision")
     token = _turn.set((str(event.source.chat_id), revision, getattr(event, "message_id", None)))
     try:
-        return await parent(event, session_key)
+        return await resume.process(adapter, event, session_key, parent)
     finally:
         _turn.reset(token)

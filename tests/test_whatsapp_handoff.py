@@ -1,12 +1,14 @@
 import asyncio
 import importlib.util
 import os
+import sys
 from pathlib import Path
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'bootstrap'))
 spec = importlib.util.spec_from_file_location('mag_whatsapp_handoff', ROOT / 'bootstrap/mag_whatsapp_handoff.py')
 guard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(guard)

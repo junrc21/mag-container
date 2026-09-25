@@ -42,5 +42,47 @@ class InvestingMcpTests(unittest.TestCase):
         self.assertNotIn("stack", responses[2]["result"]["content"][0]["text"].lower())
 
 
+class InvestingB3Tests(unittest.TestCase):
+    def call(self, message, b3=True, url="http://127.0.0.1:1"):
+        server = Path(__file__).resolve().parents[1] / "mcp" / "investing" / "server.mjs"
+        env = {"PATH": os.environ.get("PATH", ""), "INVESTING_B3_ENABLED": str(b3).lower(), "MAG_API_URL": url, "MAG_TENANT_ID": "tenant-fixed", "MAG_INVESTING_RUNTIME_TOKEN": "runtime-test-token"}
+        run = subprocess.run(["node", str(server)], input=json.dumps(message) + "\n", capture_output=True, text=True, env=env, timeout=5, check=True)
+        return json.loads(run.stdout)
+
+    def test_market_tools_are_discovered_only_when_enabled(self):
+        message = {"id": 1, "method": "tools/list"}
+        names = [t["name"] for t in self.call(message)["result"]["tools"]]
+        self.assertEqual(len(names), 8)
+        self.assertIn("get_asset_history", names)
+        self.assertEqual(len(self.call(message, b3=False)["result"]["tools"]), 3)
+
+    def test_rejects_tenant_override_and_hidden_tool(self):
+        message = {"id": 1, "method": "tools/call", "params": {"name": "get_asset", "arguments": {"asset": "PETR4", "tenantId": "other"}}}
+        self.assertTrue(self.call(message)["result"]["isError"])
+        self.assertIn("error", self.call(message, b3=False))
+
+    def test_http_forwarding_preserves_structured_data_and_identity(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from threading import Thread
+        received = []
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_POST(self):
+                received.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"]))), self.headers.get("x-investing-runtime-token")))
+                response = json.dumps({"data": {"prices": [{"close": "48.42"}], "warnings": ["historical"], "source": {"realtime": False}}, "isError": False}).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(response)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            result = self.call({"id": 1, "method": "tools/call", "params": {"name": "get_asset_history", "arguments": {"asset": "PETR4", "from": "2026-09-01", "to": "2026-09-09"}}}, url=f"http://127.0.0.1:{server.server_port}")["result"]
+            self.assertFalse(result["isError"])
+            self.assertEqual(result["structuredContent"]["result"]["prices"][0]["close"], "48.42")
+            self.assertEqual(received[0][0], "/internal/investing/asset-history")
+            self.assertEqual(received[0][1]["tenantId"], "tenant-fixed")
+            self.assertEqual(received[0][2], "runtime-test-token")
+        finally:
+            server.shutdown(); server.server_close(); thread.join()
+
+
 if __name__ == "__main__":
     unittest.main()
