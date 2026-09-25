@@ -108,6 +108,9 @@ COPY --chown=hermes:hermes mcp/docreader/server.mjs /opt/mag/docreader/server.mj
 COPY --chown=hermes:hermes bootstrap/mag_whatsapp_handoff.py /opt/hermes/mag_whatsapp_handoff.py
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_handoff.py /opt/hermes/bootstrap/patch_whatsapp_handoff.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_handoff.py
+COPY --chown=hermes:hermes bootstrap/mag_whatsapp_resume.py /opt/hermes/mag_whatsapp_resume.py
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_resume.py /opt/hermes/bootstrap/patch_whatsapp_resume.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_resume.py
 
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_byterover_plugin.py
 
