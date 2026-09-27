@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // MAG Google Workspace MCP server (stdio, zero-dependency).
 //
-// Exposes Gmail / Drive / Calendar (Meet) tools to the Hermes agent. It never
+// Exposes Gmail / Drive / Calendar (Meet) / Search Console / Analytics tools to the Hermes agent. It never
 // stores Google credentials itself: on every call it asks the MAG control plane
 // for a fresh, valid access token for the requested account and then calls the
 // Google REST APIs directly. This keeps tokens (and refresh) centralized in MAG
@@ -20,7 +20,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const SERVER_NAME = 'mag-google';
-const SERVER_VERSION = '0.3.0';
+const SERVER_VERSION = '0.4.0';
 const PROTOCOL_VERSION = '2025-06-18';
 
 const MAG_API_URL = (process.env.MAG_API_URL || '').replace(/\/$/, '');
@@ -30,6 +30,9 @@ const MAG_TENANT_ID = process.env.MAG_TENANT_ID || '';
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const DRIVE = 'https://www.googleapis.com/drive/v3';
 const CALENDAR = 'https://www.googleapis.com/calendar/v3';
+const SEARCH_CONSOLE = 'https://www.googleapis.com/webmasters/v3';
+const ANALYTICS_ADMIN = 'https://analyticsadmin.googleapis.com/v1beta';
+const ANALYTICS_DATA = 'https://analyticsdata.googleapis.com/v1beta';
 
 const MAX_TEXT = 12000; // cap any single tool result body
 
@@ -263,6 +266,24 @@ async function gmailFindLabelId(token, name) {
     throw new Error(`Label "${name}" não encontrada. Labels existentes: ${(data.labels || []).map((l) => l.name).join(', ')}`);
   }
   return found.id;
+}
+
+function asStringArray(value, fallback = []) {
+  if (Array.isArray(value)) return value.map((x) => String(x).trim()).filter(Boolean);
+  if (typeof value === 'string' && value.trim()) return value.split(',').map((x) => x.trim()).filter(Boolean);
+  return fallback;
+}
+
+function clampInt(value, fallback, min, max) {
+  const n = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function normalizeGa4Property(propertyId) {
+  const raw = String(propertyId || '').trim();
+  if (!raw) throw new Error('Informe propertyId (ex.: "123456789" ou "properties/123456789").');
+  return raw.startsWith('properties/') ? raw : `properties/${raw}`;
 }
 
 // Builds a raw RFC 2822 message. With no attachments it's a single text/plain
@@ -919,6 +940,133 @@ const tools = {
         { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
       );
       return { id: ev.id, summary: ev.summary, start: ev.start, end: ev.end, htmlLink: ev.htmlLink };
+    },
+  },
+
+  search_console_list_sites: {
+    description: 'Lista os sites/propriedades que a conta Google conectada consegue consultar no Google Search Console.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'E-mail da conta Google (opcional se só houver uma).' },
+      },
+    },
+    async run(args) {
+      const { token } = await resolveToken(args.account);
+      const data = await gfetch(token, `${SEARCH_CONSOLE}/sites`);
+      const sites = (data.siteEntry || []).map((s) => ({ siteUrl: s.siteUrl, permissionLevel: s.permissionLevel }));
+      return sites.length ? sites : 'Nenhum site do Search Console encontrado para essa conta.';
+    },
+  },
+
+  search_console_query: {
+    description: 'Consulta performance orgânica no Google Search Console (cliques, impressões, CTR e posição) para um site e período.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'E-mail da conta Google (opcional se só houver uma).' },
+        siteUrl: { type: 'string', description: 'URL exata do site no Search Console (ver search_console_list_sites).' },
+        startDate: { type: 'string', description: 'Data inicial YYYY-MM-DD.' },
+        endDate: { type: 'string', description: 'Data final YYYY-MM-DD.' },
+        dimensions: { type: 'array', items: { type: 'string' }, description: 'Dimensões, ex.: ["query","page","country","device","date"]. Padrão ["query","page"].' },
+        searchType: { type: 'string', description: 'Tipo de busca: web, image, video, news, discover ou googleNews. Padrão web.' },
+        rowLimit: { type: 'number', description: 'Máximo de linhas (padrão 25, teto 1000).' },
+        startRow: { type: 'number', description: 'Offset/paginação. Padrão 0.' },
+      },
+      required: ['siteUrl', 'startDate', 'endDate'],
+    },
+    async run(args) {
+      const { token } = await resolveToken(args.account);
+      const body = {
+        startDate: args.startDate,
+        endDate: args.endDate,
+        dimensions: asStringArray(args.dimensions, ['query', 'page']),
+        type: args.searchType || 'web',
+        rowLimit: clampInt(args.rowLimit, 25, 1, 1000),
+        startRow: clampInt(args.startRow, 0, 0, 100000),
+      };
+      const data = await gfetch(
+        token,
+        `${SEARCH_CONSOLE}/sites/${encodeURIComponent(args.siteUrl)}/searchAnalytics/query`,
+        { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+      );
+      const rows = (data.rows || []).map((r) => ({
+        keys: r.keys || [],
+        clicks: r.clicks || 0,
+        impressions: r.impressions || 0,
+        ctr: r.ctr || 0,
+        position: r.position || 0,
+      }));
+      return rows.length ? { siteUrl: args.siteUrl, startDate: args.startDate, endDate: args.endDate, dimensions: body.dimensions, rows } : 'Nenhum dado encontrado no período.';
+    },
+  },
+
+  analytics_list_properties: {
+    description: 'Lista contas e propriedades GA4 que a conta Google conectada pode consultar no Google Analytics.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'E-mail da conta Google (opcional se só houver uma).' },
+      },
+    },
+    async run(args) {
+      const { token } = await resolveToken(args.account);
+      const data = await gfetch(token, `${ANALYTICS_ADMIN}/accountSummaries?pageSize=200`);
+      const properties = [];
+      for (const account of data.accountSummaries || []) {
+        for (const prop of account.propertySummaries || []) {
+          properties.push({
+            account: account.displayName,
+            accountResource: account.account,
+            property: prop.displayName,
+            propertyResource: prop.property,
+            propertyId: String(prop.property || '').replace(/^properties\//, ''),
+            propertyType: prop.propertyType,
+          });
+        }
+      }
+      return properties.length ? properties : 'Nenhuma propriedade GA4 encontrada para essa conta.';
+    },
+  },
+
+  analytics_run_report: {
+    description: 'Roda um relatório no Google Analytics 4 (GA4 Data API) para uma propriedade, com dimensões e métricas escolhidas.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'E-mail da conta Google (opcional se só houver uma).' },
+        propertyId: { type: 'string', description: 'ID da propriedade GA4 ou "properties/ID" (ver analytics_list_properties).' },
+        startDate: { type: 'string', description: 'Data inicial YYYY-MM-DD, ou valores como 7daysAgo/30daysAgo.' },
+        endDate: { type: 'string', description: 'Data final YYYY-MM-DD ou today/yesterday.' },
+        dimensions: { type: 'array', items: { type: 'string' }, description: 'Dimensões GA4, ex.: ["date","sessionDefaultChannelGroup"]. Padrão ["date"].' },
+        metrics: { type: 'array', items: { type: 'string' }, description: 'Métricas GA4, ex.: ["activeUsers","sessions","conversions"]. Padrão ["activeUsers","sessions"].' },
+        rowLimit: { type: 'number', description: 'Máximo de linhas (padrão 25, teto 1000).' },
+      },
+      required: ['propertyId', 'startDate', 'endDate'],
+    },
+    async run(args) {
+      const { token } = await resolveToken(args.account);
+      const property = normalizeGa4Property(args.propertyId);
+      const dimensions = asStringArray(args.dimensions, ['date']).map((name) => ({ name }));
+      const metrics = asStringArray(args.metrics, ['activeUsers', 'sessions']).map((name) => ({ name }));
+      const body = {
+        dateRanges: [{ startDate: args.startDate, endDate: args.endDate }],
+        dimensions,
+        metrics,
+        limit: String(clampInt(args.rowLimit, 25, 1, 1000)),
+      };
+      const data = await gfetch(
+        token,
+        `${ANALYTICS_DATA}/${property}:runReport`,
+        { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+      );
+      const dimensionHeaders = (data.dimensionHeaders || []).map((h) => h.name);
+      const metricHeaders = (data.metricHeaders || []).map((h) => h.name);
+      const rows = (data.rows || []).map((row) => ({
+        dimensions: Object.fromEntries(dimensionHeaders.map((name, i) => [name, row.dimensionValues?.[i]?.value ?? ''])),
+        metrics: Object.fromEntries(metricHeaders.map((name, i) => [name, row.metricValues?.[i]?.value ?? ''])),
+      }));
+      return rows.length ? { property, dimensionHeaders, metricHeaders, rowCount: data.rowCount || rows.length, rows } : 'Nenhum dado encontrado no período.';
     },
   },
 };
