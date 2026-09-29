@@ -2,7 +2,7 @@
 
 A zero-dependency Node stdio MCP server bundled into the MAG runtime image at
 `/opt/mag/google-mcp/server.mjs`. It gives the Hermes agent Gmail / Drive /
-Calendar (Meet) tools.
+Calendar (Meet) / Search Console / Analytics tools.
 
 ## How it fits together
 
@@ -50,6 +50,10 @@ launch, so the service-to-service key is never written to a file.
 - **Calendar**: `calendar_list_calendars`, `calendar_list_events`,
   `calendar_create_event` (optional `recurrence` RRULE), `calendar_update_event`
   (partial update, optional `recurrence`)
+- **Search Console**: `search_console_list_sites`, `search_console_query`
+  (clicks, impressions, CTR and position by query/page/country/device/date)
+- **Analytics**: `analytics_list_properties`, `analytics_run_report` (GA4 Data
+  API reports with selected dimensions and metrics)
 
 Drive has full CRUD for plain/binary files (create/read/update/delete/share/copy).
 It cannot edit the *content* of a native Google Docs/Sheets/Slides file (Drive's

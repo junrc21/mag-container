@@ -66,7 +66,7 @@ COPY --chown=hermes:hermes mcp/c6-bank/server.mjs /opt/mag/c6-bank-mcp/server.mj
 COPY --chown=hermes:hermes mcp/linear/server.mjs /opt/mag/linear-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/clickup/server.mjs /opt/mag/clickup-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/mercado-livre/server.mjs /opt/mag/mercado-livre-mcp/server.mjs
-# MAG Investing: curated CVM regulatory-data MCP. It talks only to the MAG control
+# MAG Investing: CVM regulatory data and optional B3 historical-market MCP. It talks only to the MAG control
 # plane; the external service Bearer token never enters the tenant runtime image.
 COPY --chown=hermes:hermes mcp/investing/server.mjs /opt/mag/investing-mcp/server.mjs
 # MAG Teammates: internal tenant roster relay (list_teammates/message_teammate) —
@@ -109,6 +109,15 @@ RUN mkdir -p /opt/mag/docreader
 COPY mcp/docreader/package.json /opt/mag/docreader/package.json
 RUN cd /opt/mag/docreader && npm install --omit=dev --no-audit --no-fund && chown -R hermes:hermes /opt/mag/docreader
 COPY --chown=hermes:hermes mcp/docreader/server.mjs /opt/mag/docreader/server.mjs
+
+# Atendimento compartilhado oficial do WhatsApp. Gate na entrada e proxy de todos
+# os envios /messages para serializar a entrega com a ação humana de assumir.
+COPY --chown=hermes:hermes bootstrap/mag_whatsapp_handoff.py /opt/hermes/mag_whatsapp_handoff.py
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_handoff.py /opt/hermes/bootstrap/patch_whatsapp_handoff.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_handoff.py
+COPY --chown=hermes:hermes bootstrap/mag_whatsapp_resume.py /opt/hermes/mag_whatsapp_resume.py
+COPY --chown=hermes:hermes bootstrap/patch_whatsapp_resume.py /opt/hermes/bootstrap/patch_whatsapp_resume.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_resume.py
 
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_byterover_plugin.py
 

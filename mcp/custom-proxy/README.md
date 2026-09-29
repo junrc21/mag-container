@@ -53,3 +53,11 @@ mcp_servers:
 ```
 
 A env var `CUSTOM_CONNECTOR_CONFIG` é injetada pelo provisioner MAG quando um connector `custom` está conectado.
+
+## Ghost Admin API
+
+Use `authType: "ghost_admin"`, a URL base do blog e a chave Admin API da integração
+(`id:segredo`). O proxy gera um JWT de cinco minutos para cada chamada e envia
+`Authorization: Ghost <jwt>`. Por exemplo, uma ferramenta de leitura pode usar
+`GET /ghost/api/admin/posts/?limit=5&fields=id,title,slug,status,updated_at`.
+As URLs registradas em log omitem parâmetros de consulta, que podem conter chaves.

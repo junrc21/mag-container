@@ -26,7 +26,12 @@ const PROTOCOL_VERSION = '2025-06-18';
 const MAG_API_URL = (process.env.MAG_API_URL || '').replace(/\/$/, '');
 const MAG_INTERNAL_KEY = process.env.MAG_INTERNAL_KEY || '';
 const MAG_TENANT_ID = process.env.MAG_TENANT_ID || '';
-const MAX_TEXT = 12000;
+const MAX_TEXT = 20000;
+// Acima do maior timeout de ação que a rota interna usa (wait_for = 60s) com folga de
+// rede — sem isto, uma conexão que trava (não um erro, um hang de verdade) deixaria
+// este processo pendurado até o tool_timeout de 300s do próprio Hermes, sem nenhuma
+// mensagem útil no meio.
+const FETCH_TIMEOUT_MS = 65_000;
 
 function log(...a) {
   process.stderr.write(`[mag-companion-browser] ${a.join(' ')}\n`);
@@ -51,34 +56,49 @@ function assertConfigured() {
   }
 }
 
+/**
+ * A rota interna devolve erro em DUAS formas diferentes, dependendo de ONDE ele nasce
+ * (achado ao reconciliar duas implementações independentes desta MCP — nenhuma das duas
+ * cobria as duas formas sozinha):
+ *   1. Erro lançado antes do dispatch (device não encontrado, controle desligado, ação
+ *      recusada pela política) passa pelo errorHandler GLOBAL do mag-api, que sempre
+ *      devolve `{ error: { code, message } }` — um OBJETO.
+ *   2. Erro do dispatch em si (offline, timeout, abortado pelo usuário) é capturado à
+ *      mão na própria rota e devolvido como `{ status: 'error', code, message }` — aqui
+ *      `message` já é STRING, direto na raiz do corpo.
+ * Checar as duas, nesta ordem, é o que garante a frase de verdade (ex.: "A pessoa pediu
+ * para parar.") chegando ao modelo nos dois casos, em vez de um genérico "MAG API 503".
+ */
+function extractErrorMessage(body, res) {
+  if (typeof body.message === 'string' && body.message) return body.message;
+  if (typeof body.error === 'string' && body.error) return body.error;
+  if (body.error && typeof body.error === 'object' && typeof body.error.message === 'string') return body.error.message;
+  return `MAG API ${res.status}`;
+}
+
 async function callMag(path, options = {}) {
   assertConfigured();
-  const res = await fetch(`${MAG_API_URL}${path}`, {
-    ...options,
-    headers: { 'x-internal-key': MAG_INTERNAL_KEY, 'content-type': 'application/json', ...(options.headers || {}) },
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    // O errorHandler global do mag-api sempre devolve { error: { code, message } } — um
-    // OBJETO, não string (diferente do fallback frouxo que outros MCPs mais antigos
-    // deste repo assumem). Ler `.message` é o que dá pro modelo o motivo de verdade
-    // (ex.: "Este campo parece ser de senha..."), não um genérico "MAG API 400".
-    const message = typeof body.error === 'object' && body.error?.message
-      ? body.error.message
-      : typeof body.error === 'string'
-        ? body.error
-        : `MAG API ${res.status}`;
-    throw new Error(message);
+  let res;
+  try {
+    res = await fetch(`${MAG_API_URL}${path}`, {
+      ...options,
+      headers: { 'x-internal-key': MAG_INTERNAL_KEY, 'content-type': 'application/json', ...(options.headers || {}) },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new Error(err?.name === 'TimeoutError' ? 'O MAG API não respondeu a tempo.' : 'Não consegui falar com o MAG API agora.');
   }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(extractErrorMessage(body, res));
   return body;
 }
 
 /** Despacha uma ação canônica e devolve texto pronto pro modelo — as três formas de resposta
  *  da rota (`done`/`pending_approval`/erro lançado) viram, cada uma, uma frase clara. */
-async function dispatch(deviceId, action) {
+async function dispatch(deviceId, action, sessionId) {
   const body = await callMag('/internal/browser/actions', {
     method: 'POST',
-    body: JSON.stringify({ tenantId: MAG_TENANT_ID, deviceId, action }),
+    body: JSON.stringify({ tenantId: MAG_TENANT_ID, deviceId, action, ...(sessionId ? { sessionId } : {}) }),
   });
   if (body.status === 'pending_approval') return body.message;
   if (body.status === 'error') return `Erro: ${body.message}`;
@@ -94,8 +114,11 @@ function refField(descricao) {
 // "avaliar código" aqui — mesmo que o backend real (Playwright, no Windows) exponha
 // isso por padrão (confirmado num spike: browser_run_code_unsafe/browser_evaluate
 // aparecem na listagem sem nenhuma flag escondendo). A trava é isto aqui não existir,
-// não uma configuração que promete escondê-las.
+// não uma configuração que promete escondê-las. `additionalProperties: false` em cada
+// schema é a mesma disciplina um nível abaixo: um argumento extra que o modelo inventar
+// é rejeitado na hora, não silenciosamente ignorado.
 const DEVICE_ID_FIELD = { type: 'string', description: 'O deviceId informado no início desta conversa — nunca invente nem reaproveite de outra.' };
+const SESSION_ID_FIELD = { type: 'string', description: 'Opcional. Só use se uma chamada anterior nesta mesma tarefa tiver devolvido um sessionId explícito.' };
 
 const tools = {
   browser_navigate: {
@@ -106,6 +129,7 @@ const tools = {
       'chamada com o parâmetro browser preenchido — nunca escolha sozinho nem insista sem perguntar.',
     inputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         deviceId: DEVICE_ID_FIELD,
         url: { type: 'string', description: 'URL completa, com https://.' },
@@ -114,16 +138,22 @@ const tools = {
           enum: ['safari', 'chrome'],
           description: 'Só preencha depois que uma chamada anterior recusou o navegador padrão e o usuário escolheu entre as opções oferecidas.',
         },
+        sessionId: SESSION_ID_FIELD,
       },
       required: ['deviceId', 'url'],
     },
-    run: (a) => dispatch(a.deviceId, { type: 'navigate', url: a.url, ...(a.browser ? { browser: a.browser } : {}) }),
+    run: (a) => dispatch(a.deviceId, { type: 'navigate', url: a.url, ...(a.browser ? { browser: a.browser } : {}) }, a.sessionId),
   },
 
   browser_go_back: {
     description: 'Volta para a página anterior no histórico do navegador.',
-    inputSchema: { type: 'object', properties: { deviceId: DEVICE_ID_FIELD }, required: ['deviceId'] },
-    run: (a) => dispatch(a.deviceId, { type: 'go_back' }),
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { deviceId: DEVICE_ID_FIELD, sessionId: SESSION_ID_FIELD },
+      required: ['deviceId'],
+    },
+    run: (a) => dispatch(a.deviceId, { type: 'go_back' }, a.sessionId),
   },
 
   browser_snapshot: {
@@ -131,33 +161,42 @@ const tools = {
       'Lê a página atual: devolve o texto e a lista de elementos interativos (botões, links, campos), cada um com ' +
       'uma referência (ref) — use essa ref em browser_click/browser_type. SEMPRE tire um snapshot novo antes de ' +
       'clicar ou digitar se a página pode ter mudado (depois de navegar, ou depois de um clique anterior).',
-    inputSchema: { type: 'object', properties: { deviceId: DEVICE_ID_FIELD }, required: ['deviceId'] },
-    run: (a) => dispatch(a.deviceId, { type: 'snapshot' }),
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { deviceId: DEVICE_ID_FIELD, sessionId: SESSION_ID_FIELD },
+      required: ['deviceId'],
+    },
+    run: (a) => dispatch(a.deviceId, { type: 'snapshot' }, a.sessionId),
   },
 
   browser_find: {
     description: 'Procura um texto (ou regex) na página atual — mais barato que um snapshot inteiro quando você só precisa achar algo específico.',
     inputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         deviceId: DEVICE_ID_FIELD,
         text: { type: 'string', description: 'Texto a procurar (case-insensitive). Use isto OU regex, não os dois.' },
         regex: { type: 'string', description: 'Expressão regular a procurar. Use isto OU text, não os dois.' },
+        sessionId: SESSION_ID_FIELD,
       },
       required: ['deviceId'],
     },
-    run: (a) => dispatch(a.deviceId, { type: 'find', ...(a.text ? { text: a.text } : {}), ...(a.regex ? { regex: a.regex } : {}) }),
+    run: (a) => dispatch(a.deviceId, { type: 'find', ...(a.text ? { text: a.text } : {}), ...(a.regex ? { regex: a.regex } : {}) }, a.sessionId),
   },
 
   browser_wait_for: {
     description: 'Espera um texto aparecer ou desaparecer na página (ex.: depois de enviar um formulário), ou espera N segundos.',
     inputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         deviceId: DEVICE_ID_FIELD,
         text: { type: 'string', description: 'Espera este texto APARECER.' },
         textGone: { type: 'string', description: 'Espera este texto DESAPARECER.' },
         seconds: { type: 'number', description: 'Espera fixa, em segundos (máximo 60).' },
+        sessionId: SESSION_ID_FIELD,
       },
       required: ['deviceId'],
     },
@@ -166,23 +205,33 @@ const tools = {
       ...(a.text ? { text: a.text } : {}),
       ...(a.textGone ? { textGone: a.textGone } : {}),
       ...(typeof a.seconds === 'number' ? { seconds: a.seconds } : {}),
-    }),
+    }, a.sessionId),
   },
 
   browser_list_tabs: {
     description: 'Lista as abas abertas no navegador, com qual está ativa.',
-    inputSchema: { type: 'object', properties: { deviceId: DEVICE_ID_FIELD }, required: ['deviceId'] },
-    run: (a) => dispatch(a.deviceId, { type: 'list_tabs' }),
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { deviceId: DEVICE_ID_FIELD, sessionId: SESSION_ID_FIELD },
+      required: ['deviceId'],
+    },
+    run: (a) => dispatch(a.deviceId, { type: 'list_tabs' }, a.sessionId),
   },
 
   browser_switch_tab: {
     description: 'Troca para outra aba já aberta, pelo índice devolvido por browser_list_tabs.',
     inputSchema: {
       type: 'object',
-      properties: { deviceId: DEVICE_ID_FIELD, index: { type: 'number', description: 'Índice da aba (de browser_list_tabs).' } },
+      additionalProperties: false,
+      properties: {
+        deviceId: DEVICE_ID_FIELD,
+        index: { type: 'number', description: 'Índice da aba (de browser_list_tabs).' },
+        sessionId: SESSION_ID_FIELD,
+      },
       required: ['deviceId', 'index'],
     },
-    run: (a) => dispatch(a.deviceId, { type: 'switch_tab', index: a.index }),
+    run: (a) => dispatch(a.deviceId, { type: 'switch_tab', index: a.index }, a.sessionId),
   },
 
   browser_click: {
@@ -192,14 +241,16 @@ const tools = {
       'de senha) — nesses casos, avise o usuário em vez de tentar de novo sozinho.',
     inputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         deviceId: DEVICE_ID_FIELD,
         ref: refField('O botão/link a clicar.'),
         element: { type: 'string', description: 'Descrição humana do elemento (ex.: "botão Enviar") — ajuda a explicar ao usuário o que foi clicado.' },
+        sessionId: SESSION_ID_FIELD,
       },
       required: ['deviceId', 'ref'],
     },
-    run: (a) => dispatch(a.deviceId, { type: 'click', ref: a.ref, ...(a.element ? { element: a.element } : {}) }),
+    run: (a) => dispatch(a.deviceId, { type: 'click', ref: a.ref, ...(a.element ? { element: a.element } : {}) }, a.sessionId),
   },
 
   browser_type: {
@@ -208,12 +259,14 @@ const tools = {
       'senha, número de cartão ou documento — o servidor recusa esses campos incondicionalmente, mas nem tente.',
     inputSchema: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         deviceId: DEVICE_ID_FIELD,
         ref: refField('O campo a preencher.'),
         text: { type: 'string', description: 'Texto a digitar.' },
         submit: { type: 'boolean', description: 'Se true, envia Enter depois de digitar.' },
         element: { type: 'string', description: 'Descrição humana do campo (ex.: "campo Nome").' },
+        sessionId: SESSION_ID_FIELD,
       },
       required: ['deviceId', 'ref', 'text'],
     },
@@ -223,7 +276,7 @@ const tools = {
       text: a.text,
       ...(typeof a.submit === 'boolean' ? { submit: a.submit } : {}),
       ...(a.element ? { element: a.element } : {}),
-    }),
+    }, a.sessionId),
   },
 };
 
@@ -261,7 +314,9 @@ async function handleMessage(msg) {
   }
 }
 
-const rl = createInterface({ input: process.stdin });
+// `crlfDelay: Infinity` trata `\r\n` como um delimitador só — sem isto, um pipe no
+// Windows (onde CRLF é comum) pode entregar uma linha vazia a mais entre mensagens.
+const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on('line', (line) => {
   const t = line.trim();
   if (!t) return;
