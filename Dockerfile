@@ -56,10 +56,11 @@ PY
 
 # MAG bundled MCP servers (stdio, zero-dependency Node). The
 # MAG control plane wires them per-tenant via generated mcp_servers entries.
-RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/c6-bank-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp /opt/mag/mercado-livre-mcp /opt/mag/investing-mcp /opt/mag/teammates-mcp /opt/mag/helpcenter-mcp /opt/mag/mag-ops-mcp && chown -R hermes:hermes /opt/mag
+RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/c6-bank-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp /opt/mag/mercado-livre-mcp /opt/mag/investing-mcp /opt/mag/teammates-mcp /opt/mag/helpcenter-mcp /opt/mag/mag-ops-mcp /opt/mag/companion-browser-mcp && chown -R hermes:hermes /opt/mag
 COPY --chown=hermes:hermes mcp/google/server.mjs /opt/mag/google-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/onedrive/server.mjs /opt/mag/onedrive-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/c6-bank/server.mjs /opt/mag/c6-bank-mcp/server.mjs
+COPY --chown=hermes:hermes mcp/companion-browser/server.mjs /opt/mag/companion-browser-mcp/server.mjs
 
 # MAG Linear + ClickUp MCP servers (stdio, zero-dependency Node). Use the connector
 # token the user authorized in Fontes (fetched per-call from the MAG control plane).
