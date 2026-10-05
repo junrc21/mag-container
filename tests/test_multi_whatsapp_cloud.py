@@ -11,6 +11,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 PATCH_MULTI = ROOT / "bootstrap" / "patch_multi_whatsapp_cloud.py"
 PATCH_SESSION = ROOT / "bootstrap" / "patch_session_channel_id.py"
+PATCH_OUTLOOK = ROOT / "bootstrap" / "patch_outlook_send_provenance.py"
 
 FAKE_WHATSAPP_CLOUD = '''\
 from gateway.config import Platform, PlatformConfig
@@ -345,6 +346,38 @@ class MultiWhatsAppCloudPatchTests(unittest.TestCase):
         self.assertIn('_mag_raw_message.get("_mag_channel_id")', once_run)
         compile(once_session, "session_context.py", "exec")
         compile(once_run, "run.py", "exec")
+
+    def test_outlook_provenance_patch_keeps_session_context_compatible_after_channel_id_patch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "session_context.py"
+            run = Path(tmp) / "run.py"
+            mcp = Path(tmp) / "mcp_tool.py"
+            session.write_text(FAKE_SESSION_CONTEXT)
+            run.write_text(FAKE_RUN)
+            mcp.write_text('def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):\n    pass\n')
+            env = {
+                "PATH": os.environ.get("PATH", ""),
+                "GATEWAY_SESSION_CONTEXT_PY": str(session),
+                "GATEWAY_RUN_PY": str(run),
+                "SESSION_CONTEXT_PY": str(session),
+                "MCP_TOOL_PY": str(mcp),
+            }
+
+            first = subprocess.run([sys.executable, str(PATCH_SESSION)], text=True, capture_output=True, env=env)
+            second = subprocess.run([sys.executable, str(PATCH_OUTLOOK)], text=True, capture_output=True, env=env)
+            patched_session = session.read_text()
+            patched_run = run.read_text()
+
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn('direct_message: str = ""', patched_session)
+        self.assertIn('mag_channel_id: str = ""', patched_session)
+        self.assertIn('_SESSION_DIRECT_MESSAGE.set(direct_message)', patched_session)
+        self.assertIn('_MAG_CHANNEL_ID.set(mag_channel_id)', patched_session)
+        self.assertIn('direct_message=direct_message', patched_run)
+        self.assertIn('mag_channel_id=mag_channel_id', patched_run)
+        compile(patched_session, "session_context.py", "exec")
+        compile(patched_run, "run.py", "exec")
 
 
 if __name__ == "__main__":

@@ -2,9 +2,10 @@
 """Inject per-turn Outlook send provenance into Hermes MCP calls."""
 import os
 from pathlib import Path
+from typing import Optional
 
 RUN = Path(os.getenv("GATEWAY_RUN_PY", "/opt/hermes/gateway/run.py"))
-CTX = Path(os.getenv("SESSION_CONTEXT_PY", "/opt/hermes/gateway/session_context.py"))
+CTX = Path(os.getenv("SESSION_CONTEXT_PY") or os.getenv("GATEWAY_SESSION_CONTEXT_PY", "/opt/hermes/gateway/session_context.py"))
 MCP = Path(os.getenv("MCP_TOOL_PY", "/opt/hermes/tools/mcp_tool.py"))
 MARKER = "MAG_outlook_send_provenance_v1"
 
@@ -18,6 +19,25 @@ def patch(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
     print(f"patched {path}")
 
+def replace_once(text: str, old: str, new: str, label: str) -> str:
+    if new in text:
+        return text
+    if text.count(old) != 1:
+        raise SystemExit(f"anchor not found in {label}")
+    return text.replace(old, new, 1)
+
+def replace_one_of(text: str, variants: list[tuple[str, str]], label: str, present: Optional[str] = None) -> str:
+    if present and present in text:
+        return text
+    for _old, _new in variants:
+        if _new in text:
+            return text
+    matches = [(_old, _new) for _old, _new in variants if text.count(_old) == 1]
+    if len(matches) != 1:
+        raise SystemExit(f"anchor not found in {label}")
+    old, new = matches[0]
+    return text.replace(old, new, 1)
+
 patch(CTX,
 '''_SESSION_MESSAGE_ID: ContextVar = ContextVar("HERMES_SESSION_MESSAGE_ID", default=_UNSET)
 ''',
@@ -27,35 +47,69 @@ _SESSION_DIRECT_MESSAGE: ContextVar = ContextVar("MAG_SESSION_DIRECT_MESSAGE", d
 ''')
 
 text = CTX.read_text(encoding="utf-8")
-text = text.replace('''    "HERMES_SESSION_MESSAGE_ID": _SESSION_MESSAGE_ID,
+text = replace_once(text, '''    "HERMES_SESSION_MESSAGE_ID": _SESSION_MESSAGE_ID,
 ''', '''    "HERMES_SESSION_MESSAGE_ID": _SESSION_MESSAGE_ID,
     "MAG_SESSION_DIRECT_MESSAGE": _SESSION_DIRECT_MESSAGE,
-''', 1)
-text = text.replace('''    message_id: str = "",
+''', "session env map")
+text = replace_one_of(text, [
+    ('''    message_id: str = "",
     cwd: str = "",
 ''', '''    message_id: str = "",
     direct_message: str = "",
     cwd: str = "",
-''', 1)
-text = text.replace('''        _SESSION_MESSAGE_ID.set(message_id),
+'''),
+    ('''    message_id: str = "",
+    mag_channel_id: str = "",
+    cwd: str = "",
+''', '''    message_id: str = "",
+    direct_message: str = "",
+    mag_channel_id: str = "",
+    cwd: str = "",
+'''),
+], "set_session_vars direct_message signature", 'direct_message: str = ""')
+text = replace_one_of(text, [
+    ('''        _SESSION_MESSAGE_ID.set(message_id),
     ]
 ''', '''        _SESSION_MESSAGE_ID.set(message_id),
         _SESSION_DIRECT_MESSAGE.set(direct_message),
     ]
-''', 1)
-text = text.replace('''        _SESSION_MESSAGE_ID,
+'''),
+    ('''        _SESSION_MESSAGE_ID.set(message_id),
+        _MAG_CHANNEL_ID.set(mag_channel_id),
+    ]
+''', '''        _SESSION_MESSAGE_ID.set(message_id),
+        _SESSION_DIRECT_MESSAGE.set(direct_message),
+        _MAG_CHANNEL_ID.set(mag_channel_id),
+    ]
+'''),
+], "set_session_vars direct_message token", '_SESSION_DIRECT_MESSAGE.set(direct_message)')
+text = replace_one_of(text, [
+    ('''        _SESSION_MESSAGE_ID,
     ):
 ''', '''        _SESSION_MESSAGE_ID,
         _SESSION_DIRECT_MESSAGE,
     ):
-''', 1)
+'''),
+    ('''        _SESSION_MESSAGE_ID,
+        _MAG_CHANNEL_ID,
+    ):
+''', '''        _SESSION_MESSAGE_ID,
+        _SESSION_DIRECT_MESSAGE,
+        _MAG_CHANNEL_ID,
+    ):
+'''),
+], "clear_session_vars direct_message var", '_SESSION_DIRECT_MESSAGE')
+compile(text, str(CTX), "exec")
 CTX.write_text(text, encoding="utf-8")
 
 text = RUN.read_text(encoding="utf-8")
 if MARKER in text:
     print(f"skip {RUN}: already patched")
 else:
-    if '''        _session_env_tokens = self._set_session_env(context, mag_channel_id=_mag_channel_id)
+    if '''        _session_env_tokens = self._set_session_env(context, direct_message=(event.text or ""), mag_channel_id=_mag_channel_id)
+''' in text:
+        pass
+    elif '''        _session_env_tokens = self._set_session_env(context, mag_channel_id=_mag_channel_id)
 ''' in text:
         text = text.replace(
 '''        _session_env_tokens = self._set_session_env(context, mag_channel_id=_mag_channel_id)
@@ -74,7 +128,10 @@ else:
     else:
         raise SystemExit(f"anchor not found in {RUN}")
 
-    if '''    def _set_session_env(self, context: SessionContext, mag_channel_id: str = "") -> list:
+    if '''    def _set_session_env(self, context: SessionContext, direct_message: str = "", mag_channel_id: str = "") -> list:
+''' in text:
+        pass
+    elif '''    def _set_session_env(self, context: SessionContext, mag_channel_id: str = "") -> list:
 ''' in text:
         text = text.replace(
 '''    def _set_session_env(self, context: SessionContext, mag_channel_id: str = "") -> list:
@@ -88,11 +145,11 @@ else:
 ''',
 '''    def _set_session_env(self, context: SessionContext, direct_message: str = "") -> list:
 ''', 1)
-    elif '''    def _set_session_env(self, context: SessionContext, direct_message: str = "") -> list:
-''' not in text:
+    else:
         raise SystemExit(f"_set_session_env signature anchor not found in {RUN}")
 
-    text = text.replace('''            message_id=str(context.source.message_id) if context.source.message_id else "",
+    if "direct_message=direct_message," not in text:
+        text = text.replace('''            message_id=str(context.source.message_id) if context.source.message_id else "",
 ''', '''            message_id=str(context.source.message_id) if context.source.message_id else "",
             direct_message=direct_message,
 ''', 1)
