@@ -113,120 +113,47 @@ COPY --chown=hermes:hermes mcp/docreader/server.mjs /opt/mag/docreader/server.mj
 # Atendimento compartilhado oficial do WhatsApp. Gate na entrada e proxy de todos
 # os envios /messages para serializar a entrega com a ação humana de assumir.
 COPY --chown=hermes:hermes bootstrap/mag_whatsapp_handoff.py /opt/hermes/mag_whatsapp_handoff.py
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_handoff.py /opt/hermes/bootstrap/patch_whatsapp_handoff.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_handoff.py
 COPY --chown=hermes:hermes bootstrap/mag_whatsapp_resume.py /opt/hermes/mag_whatsapp_resume.py
-COPY --chown=hermes:hermes bootstrap/patch_whatsapp_resume.py /opt/hermes/bootstrap/patch_whatsapp_resume.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_resume.py
-COPY --chown=hermes:hermes bootstrap/patch_session_channel_id.py /opt/hermes/bootstrap/patch_session_channel_id.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_session_channel_id.py
-COPY --chown=hermes:hermes bootstrap/patch_multi_whatsapp_cloud.py /opt/hermes/bootstrap/patch_multi_whatsapp_cloud.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_multi_whatsapp_cloud.py
+COPY --chown=hermes:hermes \
+    bootstrap/patch_whatsapp_handoff.py \
+    bootstrap/patch_whatsapp_resume.py \
+    bootstrap/patch_session_channel_id.py \
+    bootstrap/patch_multi_whatsapp_cloud.py \
+    /opt/hermes/bootstrap/
 
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_byterover_plugin.py
-
-# Anti-noise: extend the gateway's Telegram-only status/error sanitization to
-# every end-user channel + humanize provider-error copy (see the script header).
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_gateway_output.py
-
-# Never leak the background "self-improvement review" summary (e.g. "💾 Self-improvement
-# review: User profile updated") to client channels — it bypasses the sanitizer via a
-# direct status-adapter send. This wires that delivery callback to None. See script header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_no_review_delivery.py
-
-# Humanize/suppress stock Hermes gateway SYSTEM messages (pairing prompt, home-channel nag)
-# that bypass the persona + sanitizer and leak the stack name / CLI to the client. See header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_gateway_system_copy.py
-
-# Async support-approval routing: dangerous commands are queued to the MAG admin
-# panel instead of prompting the user (approvals.mode: async). See script header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_approval_async.py
-
-# Kill 3 client-channel leaks found in MAG E2E (§17/§18): execute_code approval prompt,
-# /busy "Interrupting current task" notice, and the /busy first-time tip. See script header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_channel_noise_suppress.py
-
-# Disable gateway slash commands on client channels (Telegram/WhatsApp/etc.) so end
-# users can't change the LLM model, restart/reset/yolo, etc. — only /start survives,
-# everything else becomes normal text. Also empties the Telegram "/" menu. See header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_disable_channel_commands.py
-
-# Usage metering: include per-turn token usage (tokens/cost/model) in the agent:end
-# hook so the control plane can record real LLM cost per turn. See script header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_usage_tokens.py
-
-# Auxiliary (vision/compression/web_extract/...) usage ledger: capture per-call
-# model+tokens for auxiliary LLM calls (which use separate models like gpt-4o)
-# so the control plane meters them against the REAL model instead of losing
-# them. Depends on mag_turn_ledger.py (COPY'd to /opt/hermes/agent/). See header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_aux_usage_ledger.py
-
-# Per-tool credits: report the toolsets a turn used in agent:end, so the control
-# plane can bill credits weighted by tool complexity. See script header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_toolsets_used.py
-
-# Register send_message as an agent-callable tool (toolset "messaging").
-# Upstream ships the send engine but deliberately never wires it into the
-# agent's own tool-calling loop. See script header for the safety rationale
-# and how MAG's own prompt-level policy still governs who may be messaged.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_enable_send_message.py
-
-# Admin block: hard-stop a client-channel turn before the agent runs when staff
-# has blocked this tenant from the Control Center. Highest-priority gate — runs
-# before credits/topics, since a blocked tenant shouldn't even pay for those
-# checks. See script header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_admin_block.py
-
-# Credit hard cap (Fase 2): block client-channel turns before the agent runs when
-# the tenant is out of credits, with a humane message. See script header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_hardcap.py
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_tool_credit_gate.py
-
-# Credit warning (Fase 2): append an 80%-of-quota heads-up to the tenant's own
-# reply for that turn (never a separate/proactive push). See script header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_credit_warning.py
-
-# Companion credit gate: api_server.py (used by /v1/chat/completions, the
-# Companion's transport) is a structurally separate code path from run.py —
-# none of the credit/admin gates above ever run for it. Adds an authenticated
-# platform-override gate (blocks with 402 when out of credit) plus real usage
-# reporting on success, so a Companion turn is billed the same as any other
-# channel. See script header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_companion_credit_gate.py
-
-# Restricted topics: block tenant-defined sensitive themes on client channels
-# before the model runs, unless the sender is explicitly allowlisted for that
-# exact rule (Telegram user ID / WhatsApp number). See script header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_forbidden_topics_gate.py
-
-# Cron run history: report EVERY cron run (success/failure/delivery error) to the
-# control plane (POST /internal/runtime/<slug>/job-runs → mag_job_runs), so the
-# client panel can show per-routine run history. Best-effort, never breaks cron.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_cron_job_runs.py
-
-# Cron credit charge: routines never went through the chat-turn agent:end hook
-# (cron/scheduler.py calls AIAgent directly, not gateway/run.py's message handler),
-# so a successful routine ran, delivered, and never debited a single credit — the
-# pre-turn credit GATE worked, nothing downstream ever CHARGED. POSTs the same
-# payload shape as ~/.hermes/hooks/mag-runtime/handler.py's agent:end forwarder to
-# /internal/usage/events. Best-effort, never breaks cron. See script header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_cron_credit_charge.py
-
-# Task A: on client channels, remove the code_execution toolset entirely (not just
-# deny at approval) so the model never loops calling execute_code -> deny -> retry
-# (~60s+ stall before refusing). Internal surfaces keep it. See script header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_disable_channel_code_exec.py
-
-# Suppress the auto-reset banner on client channels — it leaks the AI model/provider,
-# config.yaml internals and slash commands in English. The agent still gets the
-# internal context_note; the user just continues in a fresh session. See script header.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_suppress_reset_banner.py
-
-# Kill 4 more raw-diagnostic leaks to client channels (STT-unavailable install
-# hints, compression-abort/aux-fallback ops notes, agent-inactivity timeout
-# internals) that bypass BOTH the slash-command gate and the LLM-output
-# sanitizer. See script header for why the other 4 candidate sites need no fix.
-RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_suppress_agent_diagnostics.py
+# Apply all source-code patches in one layer. Splitting every idempotent patch
+# into its own RUN pushed the final image past Docker's overlay max-depth limit.
+RUN set -eux; \
+    for patch in \
+        patch_whatsapp_handoff.py \
+        patch_whatsapp_resume.py \
+        patch_session_channel_id.py \
+        patch_multi_whatsapp_cloud.py \
+        patch_byterover_plugin.py \
+        patch_gateway_output.py \
+        patch_no_review_delivery.py \
+        patch_gateway_system_copy.py \
+        patch_approval_async.py \
+        patch_channel_noise_suppress.py \
+        patch_disable_channel_commands.py \
+        patch_usage_tokens.py \
+        patch_aux_usage_ledger.py \
+        patch_toolsets_used.py \
+        patch_enable_send_message.py \
+        patch_admin_block.py \
+        patch_credit_hardcap.py \
+        patch_tool_credit_gate.py \
+        patch_credit_warning.py \
+        patch_companion_credit_gate.py \
+        patch_forbidden_topics_gate.py \
+        patch_cron_job_runs.py \
+        patch_cron_credit_charge.py \
+        patch_disable_channel_code_exec.py \
+        patch_suppress_reset_banner.py \
+        patch_suppress_agent_diagnostics.py; \
+    do \
+        /opt/hermes/.venv/bin/python3 "/opt/hermes/bootstrap/$patch"; \
+    done
 
 # Web search backend: ddgs (DuckDuckGo) — keyless, headless (no Chrome). The
 # config pins web.backend=ddgs so the agent gets REAL results instead of trying
