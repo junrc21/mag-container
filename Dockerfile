@@ -118,6 +118,10 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_handoff.p
 COPY --chown=hermes:hermes bootstrap/mag_whatsapp_resume.py /opt/hermes/mag_whatsapp_resume.py
 COPY --chown=hermes:hermes bootstrap/patch_whatsapp_resume.py /opt/hermes/bootstrap/patch_whatsapp_resume.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_whatsapp_resume.py
+COPY --chown=hermes:hermes bootstrap/patch_session_channel_id.py /opt/hermes/bootstrap/patch_session_channel_id.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_session_channel_id.py
+COPY --chown=hermes:hermes bootstrap/patch_multi_whatsapp_cloud.py /opt/hermes/bootstrap/patch_multi_whatsapp_cloud.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_multi_whatsapp_cloud.py
 
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_byterover_plugin.py
 

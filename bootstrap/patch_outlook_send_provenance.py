@@ -51,24 +51,54 @@ text = text.replace('''        _SESSION_MESSAGE_ID,
 ''', 1)
 CTX.write_text(text, encoding="utf-8")
 
-patch(RUN,
+text = RUN.read_text(encoding="utf-8")
+if MARKER in text:
+    print(f"skip {RUN}: already patched")
+else:
+    if '''        _session_env_tokens = self._set_session_env(context, mag_channel_id=_mag_channel_id)
+''' in text:
+        text = text.replace(
+'''        _session_env_tokens = self._set_session_env(context, mag_channel_id=_mag_channel_id)
+''',
+'''        # MAG_outlook_send_provenance_v1: capture authenticated inbound text before agent enrichment.
+        _session_env_tokens = self._set_session_env(context, direct_message=(event.text or ""), mag_channel_id=_mag_channel_id)
+''', 1)
+    elif '''        _session_env_tokens = self._set_session_env(context)
+''' in text:
+        text = text.replace(
 '''        _session_env_tokens = self._set_session_env(context)
 ''',
 '''        # MAG_outlook_send_provenance_v1: capture authenticated inbound text before agent enrichment.
         _session_env_tokens = self._set_session_env(context, direct_message=(event.text or ""))
-''')
-text = RUN.read_text(encoding="utf-8")
-text = text.replace('''    def _set_session_env(self, context: SessionContext) -> list:
-''', '''    def _set_session_env(self, context: SessionContext, direct_message: str = "") -> list:
 ''', 1)
-text = text.replace('''            message_id=str(context.source.message_id) if context.source.message_id else "",
-        )
-''', '''            session_id=context.session_id,
-             message_id=str(context.source.message_id) if context.source.message_id else "",
+    else:
+        raise SystemExit(f"anchor not found in {RUN}")
+
+    if '''    def _set_session_env(self, context: SessionContext, mag_channel_id: str = "") -> list:
+''' in text:
+        text = text.replace(
+'''    def _set_session_env(self, context: SessionContext, mag_channel_id: str = "") -> list:
+''',
+'''    def _set_session_env(self, context: SessionContext, direct_message: str = "", mag_channel_id: str = "") -> list:
+''', 1)
+    elif '''    def _set_session_env(self, context: SessionContext) -> list:
+''' in text:
+        text = text.replace(
+'''    def _set_session_env(self, context: SessionContext) -> list:
+''',
+'''    def _set_session_env(self, context: SessionContext, direct_message: str = "") -> list:
+''', 1)
+    elif '''    def _set_session_env(self, context: SessionContext, direct_message: str = "") -> list:
+''' not in text:
+        raise SystemExit(f"_set_session_env signature anchor not found in {RUN}")
+
+    text = text.replace('''            message_id=str(context.source.message_id) if context.source.message_id else "",
+''', '''            message_id=str(context.source.message_id) if context.source.message_id else "",
             direct_message=direct_message,
-        )
 ''', 1)
-RUN.write_text(text, encoding="utf-8")
+    compile(text, str(RUN), "exec")
+    RUN.write_text(text, encoding="utf-8")
+    print(f"patched {RUN}")
 
 patch(MCP,
 '''def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
