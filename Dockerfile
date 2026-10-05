@@ -13,39 +13,42 @@ USER root
 
 RUN mkdir -p /opt/hermes/bootstrap && chown -R hermes:hermes /opt/hermes/bootstrap
 
-COPY --chown=hermes:hermes bootstrap/config.yaml /opt/hermes/bootstrap/config.yaml
-COPY --chown=hermes:hermes bootstrap/soul.md /opt/hermes/bootstrap/soul.md
-COPY --chown=hermes:hermes bootstrap/patch_byterover_plugin.py /opt/hermes/bootstrap/patch_byterover_plugin.py
-COPY --chown=hermes:hermes bootstrap/patch_gateway_output.py /opt/hermes/bootstrap/patch_gateway_output.py
-COPY --chown=hermes:hermes bootstrap/patch_no_review_delivery.py /opt/hermes/bootstrap/patch_no_review_delivery.py
-COPY --chown=hermes:hermes bootstrap/patch_gateway_system_copy.py /opt/hermes/bootstrap/patch_gateway_system_copy.py
-COPY --chown=hermes:hermes bootstrap/patch_approval_async.py /opt/hermes/bootstrap/patch_approval_async.py
-COPY --chown=hermes:hermes bootstrap/patch_channel_noise_suppress.py /opt/hermes/bootstrap/patch_channel_noise_suppress.py
-COPY --chown=hermes:hermes bootstrap/patch_disable_channel_commands.py /opt/hermes/bootstrap/patch_disable_channel_commands.py
-COPY --chown=hermes:hermes bootstrap/patch_usage_tokens.py /opt/hermes/bootstrap/patch_usage_tokens.py
-COPY --chown=hermes:hermes bootstrap/patch_aux_usage_ledger.py /opt/hermes/bootstrap/patch_aux_usage_ledger.py
+# Agrupa cópias para manter a imagem abaixo do limite de camadas do Docker.
+COPY --chown=hermes:hermes \
+    bootstrap/config.yaml \
+    bootstrap/soul.md \
+    bootstrap/patch_byterover_plugin.py \
+    bootstrap/patch_gateway_output.py \
+    bootstrap/patch_no_review_delivery.py \
+    bootstrap/patch_gateway_system_copy.py \
+    bootstrap/patch_approval_async.py \
+    bootstrap/patch_channel_noise_suppress.py \
+    bootstrap/patch_disable_channel_commands.py \
+    bootstrap/patch_usage_tokens.py \
+    bootstrap/patch_aux_usage_ledger.py \
+    bootstrap/patch_toolsets_used.py \
+    bootstrap/patch_enable_send_message.py \
+    bootstrap/patch_admin_block.py \
+    bootstrap/patch_credit_hardcap.py \
+    bootstrap/patch_tool_credit_gate.py \
+    bootstrap/patch_credit_warning.py \
+    bootstrap/patch_companion_credit_gate.py \
+    bootstrap/patch_forbidden_topics_gate.py \
+    bootstrap/patch_cron_job_runs.py \
+    bootstrap/patch_cron_credit_charge.py \
+    bootstrap/patch_disable_channel_code_exec.py \
+    bootstrap/patch_suppress_reset_banner.py \
+    bootstrap/patch_suppress_agent_diagnostics.py \
+    /opt/hermes/bootstrap/
 COPY --chown=hermes:hermes bootstrap/mag_turn_ledger.py /opt/hermes/agent/mag_turn_ledger.py
-COPY --chown=hermes:hermes bootstrap/patch_toolsets_used.py /opt/hermes/bootstrap/patch_toolsets_used.py
-COPY --chown=hermes:hermes bootstrap/patch_enable_send_message.py /opt/hermes/bootstrap/patch_enable_send_message.py
-COPY --chown=hermes:hermes bootstrap/patch_admin_block.py /opt/hermes/bootstrap/patch_admin_block.py
 # Compartilhado pelo gate do gateway e pelo agendador de rotinas. Enquanto a regra
 # existia só dentro do patch do gateway, as rotinas de um tenant bloqueado
 # continuavam rodando — e entregando mensagem no canal dele todo dia.
 COPY --chown=hermes:hermes bootstrap/mag_block_guard.py /opt/hermes/mag_block_guard.py
 COPY --chown=hermes:hermes bootstrap/mag_credit_guard.py /opt/hermes/mag_credit_guard.py
-COPY --chown=hermes:hermes bootstrap/patch_credit_hardcap.py /opt/hermes/bootstrap/patch_credit_hardcap.py
 # A recusa POR FERRAMENTA. O hardcap acima pergunta "sobrou alguma coisa?";
 # este pergunta "da para pagar ISTO?", no unico instante em que o preco e
 # conhecido e a acao ainda nao aconteceu.
-COPY --chown=hermes:hermes bootstrap/patch_tool_credit_gate.py /opt/hermes/bootstrap/patch_tool_credit_gate.py
-COPY --chown=hermes:hermes bootstrap/patch_credit_warning.py /opt/hermes/bootstrap/patch_credit_warning.py
-COPY --chown=hermes:hermes bootstrap/patch_companion_credit_gate.py /opt/hermes/bootstrap/patch_companion_credit_gate.py
-COPY --chown=hermes:hermes bootstrap/patch_forbidden_topics_gate.py /opt/hermes/bootstrap/patch_forbidden_topics_gate.py
-COPY --chown=hermes:hermes bootstrap/patch_cron_job_runs.py /opt/hermes/bootstrap/patch_cron_job_runs.py
-COPY --chown=hermes:hermes bootstrap/patch_cron_credit_charge.py /opt/hermes/bootstrap/patch_cron_credit_charge.py
-COPY --chown=hermes:hermes bootstrap/patch_disable_channel_code_exec.py /opt/hermes/bootstrap/patch_disable_channel_code_exec.py
-COPY --chown=hermes:hermes bootstrap/patch_suppress_reset_banner.py /opt/hermes/bootstrap/patch_suppress_reset_banner.py
-COPY --chown=hermes:hermes bootstrap/patch_suppress_agent_diagnostics.py /opt/hermes/bootstrap/patch_suppress_agent_diagnostics.py
 COPY --chown=hermes:hermes entrypoint.sh /opt/hermes/entrypoint.sh
 RUN python3 - <<'PY'
 from pathlib import Path
@@ -290,7 +293,11 @@ COPY --chown=hermes:hermes mcp/mercado-livre/server.overlay.mjs /opt/mag/mercado
 
 # Outlook Mail.Send provenance: bind the authenticated inbound chat turn to the
 # exact MCP send arguments. The model cannot provide or override this proof.
-COPY --chown=hermes:hermes bootstrap/patch_outlook_send_provenance.py /opt/hermes/bootstrap/patch_outlook_send_provenance.py
+COPY --chown=hermes:hermes \
+    bootstrap/patch_outlook_send_provenance.py \
+    bootstrap/patch_cron_companion_delivery.py \
+    bootstrap/patch_owner_error_alerts.py \
+    /opt/hermes/bootstrap/
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_outlook_send_provenance.py
 
 # A scheduled routine can now deliver to the MAG Companion (`deliver="companion:<id>"`).
@@ -301,10 +308,12 @@ RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_outlook_send_prove
 # cron/scheduler.py. The anchors do not collide (those target `tick()` and
 # `deliver_content`; this one targets `_deliver_result`), but a deterministic order
 # protects against future churn.
-COPY --chown=hermes:hermes bootstrap/patch_cron_companion_delivery.py /opt/hermes/bootstrap/patch_cron_companion_delivery.py
 RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_cron_companion_delivery.py
 
-RUN chmod +x /opt/hermes/entrypoint.sh
+# Última barreira: erros de canal/rotina vão exclusivamente ao painel do responsável.
+COPY --chown=hermes:hermes bootstrap/mag_owner_alerts.py /opt/hermes/mag_owner_alerts.py
+RUN /opt/hermes/.venv/bin/python3 /opt/hermes/bootstrap/patch_owner_error_alerts.py \
+    && chmod +x /opt/hermes/entrypoint.sh
 
 USER hermes
 ENV TZ=America/Sao_Paulo
