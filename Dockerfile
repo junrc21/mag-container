@@ -59,15 +59,16 @@ PY
 
 # MAG bundled MCP servers (stdio, zero-dependency Node). The
 # MAG control plane wires them per-tenant via generated mcp_servers entries.
-RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/c6-bank-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp /opt/mag/mercado-livre-mcp /opt/mag/investing-mcp /opt/mag/teammates-mcp /opt/mag/helpcenter-mcp /opt/mag/mag-ops-mcp /opt/mag/companion-browser-mcp && chown -R hermes:hermes /opt/mag
+RUN mkdir -p /opt/mag/google-mcp /opt/mag/onedrive-mcp /opt/mag/c6-bank-mcp /opt/mag/linear-mcp /opt/mag/clickup-mcp /opt/mag/trello-mcp /opt/mag/mercado-livre-mcp /opt/mag/investing-mcp /opt/mag/teammates-mcp /opt/mag/helpcenter-mcp /opt/mag/mag-ops-mcp /opt/mag/companion-browser-mcp && chown -R hermes:hermes /opt/mag
 COPY --chown=hermes:hermes mcp/google/server.mjs /opt/mag/google-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/onedrive/server.mjs /opt/mag/onedrive-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/c6-bank/server.mjs /opt/mag/c6-bank-mcp/server.mjs
 
-# MAG Linear + ClickUp MCP servers (stdio, zero-dependency Node). Use the connector
+# MAG Linear + ClickUp + Trello MCP servers (stdio, zero-dependency Node). Use the connector
 # token the user authorized in Fontes (fetched per-call from the MAG control plane).
 COPY --chown=hermes:hermes mcp/linear/server.mjs /opt/mag/linear-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/clickup/server.mjs /opt/mag/clickup-mcp/server.mjs
+COPY --chown=hermes:hermes mcp/trello/server.mjs /opt/mag/trello-mcp/server.mjs
 COPY --chown=hermes:hermes mcp/mercado-livre/server.mjs /opt/mag/mercado-livre-mcp/server.mjs
 # MAG Investing: CVM regulatory data and optional B3 historical-market MCP. It talks only to the MAG control
 # plane; the external service Bearer token never enters the tenant runtime image.
