@@ -70,6 +70,18 @@ def patch_run() -> None:
         '        _mag_channel_id = ""\n'
         '        if isinstance(_mag_raw_message, dict):\n'
         '            _mag_channel_id = str(_mag_raw_message.get("_mag_channel_id") or "")\n'
+        '        if not _mag_channel_id:\n'
+        '            try:\n'
+        '                import json as _mag_json\n'
+        '                _mag_provider = str(getattr(context.source.platform, "value", context.source.platform) or "").lower()\n'
+        '                _mag_policy_path = os.getenv("MAG_CHANNELS_CONFIG_PATH") or os.path.expanduser("~/policy/channels.json")\n'
+        '                with open(_mag_policy_path, "r") as _mag_f:\n'
+        '                    _mag_channels = (_mag_json.load(_mag_f) or {}).get("channels") or []\n'
+        '                _mag_matches = [c for c in _mag_channels if isinstance(c, dict) and str(c.get("provider") or "").lower() == _mag_provider and str(c.get("status") or "") in ("connected", "pending_review")]\n'
+        '                if len(_mag_matches) == 1:\n'
+        '                    _mag_channel_id = str(_mag_matches[0].get("channelId") or "")\n'
+        '            except Exception:\n'
+        '                pass\n'
         + call_new_tail
     )
     text = text.replace(call_old, call_new, 1)

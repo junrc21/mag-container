@@ -95,6 +95,13 @@ IMPORT_BLOCK = (
     "    return raw\n"
     "\n"
     "\n"
+    "def _mag_parse_channel_id(request, api_key):\n"
+    '    """Read X-MAG-Channel-Id for authenticated Companion calls."""\n'
+    "    if not api_key:\n"
+    "        return ''\n"
+    "    return request.headers.get('X-MAG-Channel-Id', '').strip()\n"
+    "\n"
+    "\n"
     "def _mag_companion_credit_block_message():\n"
     '    """Return a client-safe block message, or None only when credit is\n'
     "    available. Mirrors patch_credit_hardcap.py's chat-turn gate exactly —\n"
@@ -168,6 +175,7 @@ GATE_BLOCK = (
     "\n"
     "        # MAG: companion credit gate — see patch_companion_credit_gate.py.\n"
     "        platform_override = _mag_parse_platform_override(request, self._api_key)\n"
+    "        mag_channel_id = _mag_parse_channel_id(request, self._api_key)\n"
     "        if platform_override == _MAG_COMPANION_PLATFORM:\n"
     "            _mag_block = _mag_companion_credit_block_message()\n"
     "            if _mag_block is not None:\n"
@@ -209,6 +217,7 @@ STREAM_CALL_BLOCK = (
     "                tool_complete_callback=_on_tool_complete,\n"
     "                agent_ref=agent_ref,\n"
     "                gateway_session_key=gateway_session_key,\n"
+    "                mag_channel_id=mag_channel_id,  # MAG: active Companion channel\n"
     "                platform_override=platform_override,  # MAG: companion credit gate\n"
     "            ))\n"
 )
@@ -228,6 +237,7 @@ NONSTREAM_CALL_BLOCK = (
     "                ephemeral_system_prompt=system_prompt,\n"
     "                session_id=session_id,\n"
     "                gateway_session_key=gateway_session_key,\n"
+    "                mag_channel_id=mag_channel_id,  # MAG: active Companion channel\n"
     "                platform_override=platform_override,  # MAG: companion credit gate\n"
     "            )\n"
 )
@@ -242,6 +252,7 @@ SIGNATURE_ANCHOR = (
 SIGNATURE_BLOCK = (
     "        agent_ref: Optional[list] = None,\n"
     "        gateway_session_key: Optional[str] = None,\n"
+    "        mag_channel_id: str = \"\",  # MAG: active Companion channel\n"
     "        platform_override: Optional[str] = None,  # MAG: companion credit gate\n"
     "    ) -> tuple:\n"
 )
@@ -268,6 +279,7 @@ SESSION_VARS_BLOCK = (
     '                chat_id=session_id or "",\n'
     '                session_key=gateway_session_key or session_id or "",\n'
     '                session_id=session_id or "",\n'
+    '                mag_channel_id=mag_channel_id,\n'
     "            )\n"
 )
 

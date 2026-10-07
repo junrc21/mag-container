@@ -19,7 +19,8 @@ import textwrap
 
 
 PATH = Path(os.getenv("WHATSAPP_CLOUD_PY", "/opt/hermes/gateway/platforms/whatsapp_cloud.py"))
-MARKER = "# MAG_MULTI_WHATSAPP_CLOUD_V1"
+MARKER = "# MAG_MULTI_WHATSAPP_CLOUD_V2"
+LEGACY_MARKER = "# MAG_MULTI_WHATSAPP_CLOUD_V1"
 
 
 def patch() -> None:
@@ -27,12 +28,22 @@ def patch() -> None:
     if MARKER in text:
         print("OK: multi WhatsApp Cloud already patched")
         return
+    if LEGACY_MARKER in text:
+        old = 'await child._dispatch_payload({"object": payload.get("object"), "entry": [{"changes": [change]}]})'
+        new = 'await _MAG_OriginalWhatsAppCloudAdapter._dispatch_payload(child, {"object": payload.get("object"), "entry": [{"changes": [change]}]})'
+        if text.count(old) != 1:
+            raise SystemExit("patch_multi_whatsapp_cloud: legacy dispatch anchor drift")
+        text = text.replace(old, new).replace(LEGACY_MARKER, MARKER)
+        compile(text, str(PATH), "exec")
+        PATH.write_text(text)
+        print("OK: multi WhatsApp Cloud upgraded to V2")
+        return
     if text.count("class WhatsAppCloudAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):") != 1:
         raise SystemExit("patch_multi_whatsapp_cloud: WhatsAppCloudAdapter anchor drift")
     addition = textwrap.dedent(
         r'''
 
-        # MAG_MULTI_WHATSAPP_CLOUD_V1
+        # MAG_MULTI_WHATSAPP_CLOUD_V2
         _MAG_OriginalWhatsAppCloudAdapter = WhatsAppCloudAdapter
 
 
@@ -212,7 +223,7 @@ def patch() -> None:
                                 sender = str(raw_message.get("from") or "").strip()
                                 if sender:
                                     self._mag_chat_to_child[sender] = child
-                        await child._dispatch_payload({"object": payload.get("object"), "entry": [{"changes": [change]}]})
+                        await _MAG_OriginalWhatsAppCloudAdapter._dispatch_payload(child, {"object": payload.get("object"), "entry": [{"changes": [change]}]})
         '''
     )
     text = text + addition

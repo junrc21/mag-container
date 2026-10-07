@@ -241,6 +241,25 @@ class MultiWhatsAppCloudPatchTests(unittest.TestCase):
         self.assertIn("anchor drift", completed.stderr)
         self.assertNotIn("_mag_load_whatsapp_cloud_channels", unchanged)
 
+    def test_multi_adapter_upgrades_legacy_dispatch_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "whatsapp_cloud.py"
+            target.write_text(FAKE_WHATSAPP_CLOUD_RUNTIME)
+            env = {"PATH": os.environ.get("PATH", ""), "WHATSAPP_CLOUD_PY": str(target)}
+            first = subprocess.run([sys.executable, str(PATCH_MULTI)], text=True, capture_output=True, env=env)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            legacy = target.read_text().replace("MAG_MULTI_WHATSAPP_CLOUD_V2", "MAG_MULTI_WHATSAPP_CLOUD_V1")
+            legacy = legacy.replace("await _MAG_OriginalWhatsAppCloudAdapter._dispatch_payload(child, ", "await child._dispatch_payload(")
+            target.write_text(legacy)
+            upgrade = subprocess.run([sys.executable, str(PATCH_MULTI)], text=True, capture_output=True, env=env)
+            upgraded = target.read_text()
+            repeat = subprocess.run([sys.executable, str(PATCH_MULTI)], text=True, capture_output=True, env=env)
+            self.assertEqual(upgrade.returncode, 0, upgrade.stderr)
+            self.assertIn("upgraded to V2", upgrade.stdout)
+            self.assertIn("await _MAG_OriginalWhatsAppCloudAdapter._dispatch_payload(child,", upgraded)
+            self.assertEqual(repeat.returncode, 0, repeat.stderr)
+            self.assertEqual(upgraded, target.read_text())
+
     def test_multi_adapter_routes_by_phone_number_and_tags_channel(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -317,6 +336,26 @@ class MultiWhatsAppCloudPatchTests(unittest.TestCase):
             self.assertEqual(result["phone"], "phone-2")
             self.assertEqual(child.sent[0][1], "oi")
 
+            primary_message = {"from": "5544999600850"}
+            primary_payload = {
+                "object": "whatsapp_business_account",
+                "entry": [{"changes": [{
+                    "field": "messages",
+                    "value": {
+                        "metadata": {"phone_number_id": "phone-1"},
+                        "messages": [primary_message],
+                    },
+                }]}],
+            }
+            asyncio.run(adapter._dispatch_payload(primary_payload))
+            self.assertEqual(primary_message["_mag_channel_id"], "chan-primary")
+            self.assertEqual(len(adapter.dispatched), 1)
+            self.assertEqual(len(child.dispatched), 1)
+            self.assertEqual(adapter.mag_channel_id_for_chat("5544999600850"), "chan-primary")
+            primary_result = asyncio.run(adapter.send("5544999600850", "oi principal"))
+            self.assertEqual(primary_result["phone"], "phone-1")
+            self.assertEqual(adapter.sent[0][1], "oi principal")
+
     def test_session_channel_id_patch_applies_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             session = Path(tmp) / "session_context.py"
@@ -344,6 +383,8 @@ class MultiWhatsAppCloudPatchTests(unittest.TestCase):
         self.assertIn('"MAG_CHANNEL_ID": _MAG_CHANNEL_ID', once_session)
         self.assertIn("mag_channel_id=mag_channel_id", once_run)
         self.assertIn('_mag_raw_message.get("_mag_channel_id")', once_run)
+        self.assertIn('MAG_CHANNELS_CONFIG_PATH', once_run)
+        self.assertIn('len(_mag_matches) == 1', once_run)
         compile(once_session, "session_context.py", "exec")
         compile(once_run, "run.py", "exec")
 
